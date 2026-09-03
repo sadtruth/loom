@@ -1,0 +1,4 @@
+[test]
+# Every property runs 400 cases, not fast-check's default 100 — see tests/fc-config.ts for why the
+# gate stopped running the whole suite three times instead.
+preload = ["./tests/fc-config.ts"]

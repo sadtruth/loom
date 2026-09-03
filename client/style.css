@@ -1,0 +1,2995 @@
+:root {
+  /* Light theme, by request (2026-08-05: "i hate the black theme, make it white"). */
+  --bg: #ffffff;
+  --bg-raised: #f7f8fa;
+  --bg-sunken: #f0f1f5;
+  --line: #d8dbe3;
+  --line-soft: #e8eaf0;
+  --ink: #23293a;
+  --ink-dim: #5c6478;
+  --ink-faint: #9299ab;
+  --accent: #3b6ecc;
+  --user: #2e7d32;
+  --warn: #9a6a12;
+  --error: #c0344e;
+  --pin: #9a6a12;
+  /* Brighter than --warn on purpose: focus is a state he CHOSE, not a caution. */
+  --gold: #c8901a;
+  --radius: 7px;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+body { display: flex; flex-direction: column; overflow: hidden; }
+
+select, input[type="search"] {
+  background: var(--bg-sunken);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 5px 8px;
+  font-family: var(--sans);
+  font-size: 13px;
+  max-width: 340px;
+}
+input[type="search"] { width: 100%; max-width: none; }
+select:focus, input:focus { outline: 1px solid var(--accent); }
+
+.toggle {
+  background: transparent;
+  color: var(--ink-dim);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 4px 9px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: var(--sans);
+}
+.toggle:hover { color: var(--ink); border-color: var(--ink-faint); }
+.toggle.on { background: var(--accent); color: #ffffff; border-color: var(--accent); font-weight: 600; }
+
+/* Wraps instead of running off the rail: its text ranges from "live" to "no sessions here yet", and
+   at the long end `nowrap` put it 32px past the edge (layout-holds 2026-08-06). */
+.status { font-size: 12px; color: var(--ink-faint); font-family: var(--mono); min-width: 0; overflow-wrap: break-word; }
+.status.live { color: var(--user); }
+.status.error { color: var(--error); }
+
+/* ── layout ────────────────────────────────────────────────────── */
+
+#layout {
+  display: grid;
+  /* Columns come from variables so each pane's open/closed state is ONE declaration. Writing the
+     four widths out per combination needs 8 rules and rots the moment a fifth pane appears. */
+  --col-side: 270px;
+  --col-drawer: 300px;
+  /* THREE columns, one job each (SPEC 177): the tree, the content, and everything that is neither.
+     The file used to have a fourth column held at 0px until something opened in it; a file is
+     content, so it shows in the centre instead and the column is gone rather than empty. */
+  grid-template-columns: var(--col-side) minmax(0, 1fr) var(--col-drawer);
+  /* The row must be bounded. Without this the implicit row is `auto`, so it sizes to the tallest
+     pane's CONTENT and grows past the window — `body { overflow: hidden }` then clips whatever is
+     at the bottom, which is the composer and its send button. That is the "I can't see the send
+     button" bug, and it had nothing to do with the composer itself (screenshot, 2026-08-06). */
+  grid-template-rows: minmax(0, 1fr);
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+
+/* Explicit columns are load-bearing, not tidiness: `display:none` on a grid child removes it from
+   auto-placement, so hiding the rail slid the transcript into column 1 — which is zero-width when
+   collapsed, blanking the whole app. Found by driving the flow, invisible to a per-pane assertion. */
+#side { grid-column: 1; border-right: 1px solid var(--line); background: var(--bg-sunken); }
+#transcript { grid-column: 2; }
+/* The file shares the CENTRE column and takes the whole of it while it is open — the arrangement
+   189 finishes, where the file is a member of the open set with its head scrolling with it. Until
+   then the pane keeps its own head and its own close button. */
+#file { grid-column: 2; display: none; }
+#drawer { grid-column: 3; border-left: 1px solid var(--line); background: var(--bg-sunken); }
+
+/* Wraps rather than overflows: the rail's head carries a title, a status whose text varies from
+   "live" to "no sessions here yet", and the build hash. Unwrapped, the longest status pushed the
+   hash 77px past the rail's edge (measured, layout-holds 2026-08-06) — and the hash is the one
+   thing there that must never be cropped, since it answers "is this the bundle being served?". */
+.pane-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line-soft);
+  flex: 0 0 auto;
+  min-width: 0;
+}
+.pane-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-faint);
+  font-weight: 600;
+}
+.count {
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--ink-faint);
+  background: var(--bg-raised);
+  border-radius: 10px;
+  padding: 0 7px;
+}
+.icon {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--ink-faint);
+  cursor: pointer;
+  font-size: 15px;
+  padding: 0 4px;
+}
+.icon:hover { color: var(--ink); }
+
+.pane-body { overflow-y: auto; overflow-x: hidden; flex: 1 1 auto; padding: 8px; }
+/* The bottom clearance, and it is padding INSIDE the scroller on purpose — after a round on the
+   outside, on #chat-area, proved the wrong half had been blamed.
+
+   History, because this one line has been wrong in three different ways. 60vh (562px of nothing in
+   a 697px pane, layout-holds 2026-08-06), then 84px: both were travel UNDER the reader, because
+   `scrollToEnd()` parked the last message on the viewport floor — so the resting position sat 84px
+   above the true bottom, and every live append jumped the view up by exactly that (User,
+   2026-08-07: "the chat window allows me to scroll below the last message and when you update
+   something in the chat it automatically pulls me up"; measured 106px, both halves the same
+   number). The fix that day did two things — moved the clearance out to #chat-area, AND sent
+   `scrollToEnd()` to the scroller's own bottom. Only the second was load-bearing.
+
+   What the first one cost: a 64px strip of window no text could ever enter, clipping the last line
+   mid-height at every scroll position. User, 2026-08-08: "the white div that goes over text is
+   weird and unnecessarily limits use of space. It doesnt work like that in vs code... i want the
+   same experience that leaves a gap at the lowest position but utilizes that gap when scrolled up."
+   Padding here is that experience, now that the end is an exact position: at rest the reader IS at
+   max scroll, so the padding is the gap and there is nothing below it to fall into — and one notch
+   up, text fills it. Pinned both ways in journey12-scroll (zero band below the scroller; no unused
+   space under the text from 200px up). Never re-add clearance to #chat-area to fix the clipping.
+
+   2026-08-12, SPEC 199: the composer is now the LAST ELEMENT of this scroller, so the 64px is no
+   longer what stands between the last message and the bar — the composer's own top margin is
+   (below). What is left here is the room under the composer at rest, and it is small on purpose:
+   this is the one strip the reader is parked on, and it fills with text the moment he scrolls up,
+   exactly as before. */
+/* `overflow-anchor: none` because loom does its own anchoring (SPEC 211/213) and the browser's is a
+   SECOND one working from different rules. Chrome silently adds to `scrollTop` whenever content
+   above the viewport changes height — which under a windowed transcript (228) is every time the
+   window moves, since the spacers are exactly that. Measured 2026-08-23: a finished turn removed
+   its working row, Chrome compensated by 41px, and the reader ended 25px off an end they had never
+   left. Two anchors cannot both be right; this file's is the one with the pins. */
+#transcript-body { padding: 18px 26px 26px; overflow-anchor: none; }
+/* The two ends of a windowed transcript (SPEC 228): the history that is not mounted, standing as
+   exactly the height it would have taken. No margin and no padding of their own — the whole point is
+   that a spacer is worth the pixels the model says and not one more — and no pointer events, so a
+   click never lands on the absence of a message. */
+.win-space { display: block; margin: 0; padding: 0; pointer-events: none; }
+/* `1 of :not([hidden])`, not plain :last-child — the working row is appended once and parked hidden
+   at the end of the transcript, so :last-child is almost never the last thing you can SEE, and the
+   real last message kept its 22px (measured 2026-08-07). */
+#transcript-body > :nth-last-child(1 of :not([hidden])) { margin-bottom: 0; }
+
+#layout.drawer-collapsed { --col-drawer: 0px; }
+#layout.file-open #file { display: flex; }
+/* A file is content, and the centre shows ONE thing: the transcript stands down while it is up. */
+#layout.file-open #transcript { display: none; }
+#layout.drawer-collapsed #drawer { display: none; }
+
+/* ── file pane ─────────────────────────────────────────────────── */
+
+/* The head is INSIDE the scroller (SPEC 189), so it scrolls away with the file rather than sitting
+   over it. Nothing in the centre column is permanent any more. */
+#file-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin-bottom: 14px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line-soft);
+}
+#file-title { font-size: 13px; font-weight: 600; color: var(--ink); min-width: 0; overflow-wrap: anywhere; }
+.file-path {
+  flex: 1 0 100%;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-faint);
+  overflow-wrap: anywhere;
+  cursor: copy;
+}
+.mini {
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--ink-faint);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 3px 6px;
+  margin-left: auto;
+}
+.mini:hover { color: var(--ink); border-color: var(--ink-faint); }
+#file .icon { margin-left: 4px; }
+/* The same reading measure as the transcript: a file is content in the same column now. */
+#file-body { padding: 18px 26px 120px; } /* clearance, not 40vh of empty screen — see #transcript-body */
+.file-note { color: var(--ink-faint); font-size: 12.5px; font-family: var(--mono); }
+.file-text {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--ink-dim);
+}
+/* A refusal that names a way out (link kind 12): the status, then what was checked, then the one
+   action that legitimately reaches outside the roots. Set apart from an ordinary note, because it
+   is the one note the reader has to act on. */
+.file-refusal {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+.file-refusal p { margin: 0; }
+.file-roots { font-size: 11px; overflow-wrap: anywhere; color: var(--ink-faint); }
+.file-handoff {
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--ink-dim);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  padding: 4px 9px;
+}
+.file-handoff:hover { color: var(--ink); border-color: var(--ink-faint); }
+.file-md { font-size: 14px; line-height: 1.62; }
+.file-image { max-width: 100%; border-radius: var(--radius); }
+
+/* ── left column ───────────────────────────────────────────────── */
+
+.rail-empty { color: var(--ink-faint); font-size: 12px; padding: 10px; }
+
+/* ── messages ──────────────────────────────────────────────────── */
+
+/* A seam — where one session ends and the next begins (SPEC §Train).
+   Drawn plainly on purpose: User asked for it visible, and the two sides really are separate
+   contexts, so a hairline that pretended otherwise would be the viewer lying. */
+.seam {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0 22px;
+  color: var(--ink-faint);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.seam::before,
+.seam::after {
+  content: "";
+  flex: 1 1 auto;
+  border-top: 1px dashed var(--line);
+}
+.seam::before { flex: 0 0 24px; }
+.seam-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: inherit;
+}
+.seam.current { color: var(--ink-dim); }
+.seam.current::before,
+.seam.current::after { border-top-style: solid; border-top-color: var(--accent); opacity: 0.45; }
+button.seam-open {
+  background: none;
+  border: none;
+  padding: 2px 6px;
+  border-radius: var(--radius);
+  font: inherit;
+  cursor: pointer;
+}
+button.seam-open:hover { background: var(--bg-sunken); color: var(--ink); }
+
+/* NO measure (SPEC 183). Content runs the full column: the 78ch cap was most of what made the
+   centre feel narrow even after the chrome left it, and it was never a numbered requirement — it
+   lived only here. The record surfaces lost theirs too (SPEC 193) — a task row is content, not a
+   form, and a field that stops short of the list it writes into is a ragged edge. If long
+   lines turn out to lose the return sweep at a wide window, the answer is a measure for PROSE, not
+   this cap coming back. */
+.msg { margin: 0 0 22px; scroll-margin-top: 16px; position: relative; }
+/* The answer of a turn (SPEC 190): a 6px filled circle in the left margin, at the text colour,
+   aligned to the message's FIRST LINE. The message itself is styled exactly like every other one —
+   the margin is where a mark can be a mark without becoming a treatment.
+
+   It hangs off the element AFTER the head, not off the head. The head is the who-and-time row, so
+   centring the mark on it put the dot beside the timestamp rather than beside the first line of what
+   was written. OPEN, 2026-08-13: a turn renders as ONE article, so this puts the mark beside what the
+   turn opened with — on a working turn, a fold of tool calls — while 190's words are about the
+   message the turn ENDED on. Moving it to the article's last block turns `journey.spec:124` red, and
+   a pin is not edited to make a change go green: it is his call, recorded as item 26 of the record. `0.5lh` is half a line box, which puts the dot on the middle of that line whatever
+   the line-height turns out to be; the `em` above it is the same number worked out for the
+   transcript's 1.55 and is what a browser with no `lh` unit falls back to. */
+.msg.answer > .msg-head + * { position: relative; }
+.msg.answer > .msg-head + *::before {
+  content: "";
+  position: absolute;
+  left: -14px;
+  top: 0.775em;
+  top: 0.5lh;
+  transform: translateY(-50%);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ink);
+}
+.msg-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 5px;
+}
+.who { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700; }
+.msg.user .who { color: var(--user); }
+.msg.assistant .who { color: var(--accent); }
+.msg.system .who { color: var(--warn); }
+.when { font-size: 11px; color: var(--ink-faint); font-family: var(--mono); }
+.pin-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--ink-faint);
+  font-size: 13px;
+  padding: 0 3px;
+  opacity: 0;
+}
+.msg:hover .pin-btn { opacity: 1; }
+.pin-btn.on { opacity: 1; color: var(--pin); }
+.msg.pinned { border-left: 2px solid var(--pin); padding-left: 12px; margin-left: -14px; }
+.msg.meta { opacity: 0.55; }
+
+/* The turn-cost figure (usage-bar, 2026-08-26): `renderTurn` appends `.cost` to `.msg-head` after
+   `.pin-btn`, on the star's own hover rule above — quiet unless the turn was expensive, because it
+   is on every turn and a figure loud at rest would be worse than none (SPEC §Bar). This is his own
+   rule, not a taste call: *"Show the info to the right of the star, next to time of message and
+   only on hover unless the message eats a lot"* (2026-08-26). Made always-visible on 2026-08-29
+   and put back the same day. `.loud` is set
+   by `turnCostLabel` in render.ts, never guessed here: >=0.45% of the window or any call under 50%
+   cache, both named consts there. */
+.cost {
+  font-size: 10px;
+  font-family: var(--mono);
+  color: var(--ink-faint);
+  opacity: 0;
+  white-space: nowrap;
+}
+.msg:hover .cost { opacity: 1; }
+.cost.loud { opacity: 1; color: var(--warn); font-weight: 600; }
+
+.body > *:first-child { margin-top: 0; }
+.body > *:last-child { margin-bottom: 0; }
+.body p { margin: 0 0 0.75em; }
+.body h1, .body h2, .body h3 { line-height: 1.3; margin: 1.1em 0 0.45em; }
+.body h1 { font-size: 1.35em; }
+.body h2 { font-size: 1.18em; }
+.body h3 { font-size: 1.05em; }
+.body ul, .body ol { margin: 0 0 0.75em; padding-left: 1.4em; }
+.body li { margin: 0.15em 0; }
+.body blockquote {
+  margin: 0 0 0.75em;
+  padding-left: 12px;
+  border-left: 2px solid var(--line);
+  color: var(--ink-dim);
+}
+.body code {
+  font-family: var(--mono);
+  font-size: 0.9em;
+  background: var(--bg-sunken);
+  border: 1px solid var(--line-soft);
+  border-radius: 4px;
+  padding: 0.5px 4px;
+}
+.body pre {
+  background: var(--bg-sunken);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  overflow-x: auto;
+  margin: 0 0 0.75em;
+}
+.body pre code { background: none; border: none; padding: 0; font-size: 12.5px; }
+.body a { color: var(--accent); }
+.body table { border-collapse: collapse; margin: 0 0 0.75em; font-size: 13px; }
+.body th, .body td { border: 1px solid var(--line); padding: 4px 9px; text-align: left; }
+.body th { background: var(--bg-raised); }
+
+/* ── path chips ────────────────────────────────────────────────── */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--mono);
+  font-size: 0.88em;
+  background: #eef2fb;
+  color: #2d5cb8;
+  border: 1px solid #c4d2ef;
+  border-radius: 5px;
+  padding: 0.5px 6px;
+  cursor: pointer;
+  text-decoration: none;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.chip:hover { background: #dfe8fa; color: #1d4aa8; }
+.chip::before { content: "▸"; font-size: 0.8em; opacity: 0.7; }
+
+/* Three families, so the reader knows where a chip goes before clicking it (SPEC 139): blue-sans is
+   a place in loom, blue-mono a file, and the amber a moment in a conversation — the last one is
+   turns and record items, which have no target syntax yet. Settled over
+   projects/smart-links/mockups/chips-2026-08-10.html. */
+.chip.rec {
+  font-family: var(--sans);
+  font-size: 0.94em;
+  background: #e9f0fd;
+  border-color: #b9cdf1;
+}
+/* The tree's own status dot, so the same project reads the same way in both places. */
+.chip.rec::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 1;
+  flex: none;
+}
+.chip.rec.framing::before { background: var(--ink-faint); }
+.chip.rec.done::before { background: var(--user); }
+.chip.dir::before { content: "▤"; }
+/* A wikilink is a note NAME, not a path — sans like the other places in loom, and marked with the
+   vault's own bracket so the form it was written in survives the render (link kind 11). */
+.chip.wiki { font-family: var(--sans); font-size: 0.94em; }
+.chip.wiki::before { content: "⟦"; }
+/* Dim, sans, and never the thing you read first: the owner suffix disambiguates, it does not label. */
+.chip .owner {
+  color: var(--ink-faint);
+  font-family: var(--sans);
+  font-size: 0.92em;
+}
+/* A link that leaves loom says so, and is deliberately NOT a chip. */
+.body a.ext::after { content: "↗"; font-size: 0.85em; margin-left: 2px; opacity: 0.75; }
+
+/* ── the file pane's directory listing ─────────────────────────── */
+
+.file-dir { display: flex; flex-direction: column; gap: 2px; padding: 2px 0; }
+.file-dir-row { display: flex; align-items: baseline; gap: 8px; }
+.file-dir-size { color: var(--ink-faint); font-family: var(--mono); font-size: 11px; }
+/* The line a `path:120` chip landed on — same flash as a pin jump, then it stays marked. */
+.file-line { background: #fdf4e4; box-shadow: 0 0 0 2px #fdf4e4; border-radius: 2px; }
+
+/* ── code in the file pane (SPEC 144) ──────────────────────────────
+   One row per line, numbered off `data-line` so selecting the code never drags the gutter into the
+   clipboard. The palette is loom's own, written for this light theme rather than dropping in a
+   highlight.js stylesheet built for someone else's background: comments recede, strings and numbers
+   sit in the warm family, keywords and types take the two blues. */
+.file-text code { display: block; }
+.file-row { display: block; padding-left: 3.6em; text-indent: -3.6em; }
+.file-row::before {
+  content: attr(data-line);
+  display: inline-block;
+  width: 3em;
+  margin-right: 0.6em;
+  text-align: right;
+  text-indent: 0;
+  color: var(--ink-faint);
+  opacity: 0.6;
+  user-select: none;
+}
+.file-row.file-line::before { opacity: 1; color: var(--pin); }
+.hljs-comment, .hljs-quote { color: #8a93a6; font-style: italic; }
+.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-doctag { color: #3b6ecc; }
+.hljs-type, .hljs-title.class_, .hljs-built_in { color: #1f7a8c; }
+.hljs-string, .hljs-regexp, .hljs-addition, .hljs-attribute, .hljs-meta .hljs-string { color: #2e7d32; }
+.hljs-number, .hljs-symbol, .hljs-bullet, .hljs-link { color: #9a6a12; }
+.hljs-title, .hljs-title.function_, .hljs-section, .hljs-name { color: #6a4bbd; }
+.hljs-variable, .hljs-template-variable, .hljs-attr, .hljs-property { color: var(--ink); }
+.hljs-meta, .hljs-params { color: var(--ink-dim); }
+.hljs-deletion { color: var(--error); }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 600; }
+
+/* ── tool rows ─────────────────────────────────────────────────── */
+
+.tool {
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  margin: 0 0 8px;
+  overflow: hidden;
+}
+.tool summary {
+  cursor: pointer;
+  padding: 5px 10px;
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 12.5px;
+  list-style: none;
+}
+.tool summary::-webkit-details-marker { display: none; }
+.tool .tname { font-weight: 700; color: var(--ink-dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+.tool .tsum {
+  font-family: var(--mono);
+  color: var(--ink-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1 1 auto;
+}
+.tool.error .tname { color: var(--error); }
+.tool pre {
+  margin: 0;
+  border-top: 1px solid var(--line-soft);
+  padding: 9px 11px;
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 460px;
+  overflow-y: auto;
+  color: var(--ink-dim);
+}
+.tool pre + pre { border-top: 1px solid var(--line-soft); }
+.tool .label { color: var(--ink-faint); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
+
+/* A folded run of tool calls. One line stands in for what used to be a dozen rows; the count and the
+   verb mix are what tells you whether it is worth expanding. */
+.steps { margin: 0 0 10px; }
+.steps > summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 3px 0 3px 12px;
+  border-left: 2px solid var(--line);
+  font-size: 11.5px;
+  font-family: var(--mono);
+  color: var(--ink-faint);
+}
+.steps > summary::-webkit-details-marker { display: none; }
+.steps > summary::before { content: "▸ "; }
+.steps[open] > summary::before { content: "▾ "; }
+.steps > summary:hover { color: var(--ink-dim); }
+.steps > .inner { padding: 6px 0 0 12px; border-left: 2px solid var(--line-soft); }
+
+.thinking { border-left: 2px solid var(--line); margin: 0 0 10px; }
+.thinking summary {
+  cursor: pointer;
+  font-size: 11.5px;
+  color: var(--ink-faint);
+  padding: 2px 0 2px 10px;
+  list-style: none;
+}
+.thinking summary::-webkit-details-marker { display: none; }
+.thinking .inner { padding: 4px 0 6px 10px; color: var(--ink-dim); font-size: 13px; }
+
+/* ── rich blocks ───────────────────────────────────────────────── */
+
+.rich { margin: 0 0 0.75em; }
+.rich-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+.rich-grid figure { margin: 0; }
+.rich-grid img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--bg-sunken);
+}
+.rich-grid figcaption { font-size: 11px; color: var(--ink-faint); margin-top: 3px; }
+.rich-src { margin-top: 4px; }
+.rich-src summary { cursor: pointer; font-size: 11px; color: var(--ink-faint); }
+
+/* ── drawer ────────────────────────────────────────────────────── */
+
+/* The two picks ARE the pane's title — a column with two surfaces should say which one it is
+   showing in the place a one-surface column says its name (SPEC 76). */
+.drawer-pick {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-family: var(--sans);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+  color: var(--ink-faint);
+  opacity: 0.55;
+}
+.drawer-pick:hover:not(:disabled) { color: var(--ink-dim); opacity: 1; }
+.drawer-pick.on { color: var(--ink-dim); opacity: 1; }
+.drawer-pick:disabled { cursor: default; opacity: 0.3; }
+
+/* The fold for finished items, the same shape as the tree's `+ N older` row. */
+.drawer-more {
+  display: block;
+  width: 100%;
+  margin: 2px 0 8px;
+  padding: 4px 6px;
+  background: none;
+  border: none;
+  border-top: 1px solid var(--line-soft);
+  color: var(--ink-faint);
+  font-family: var(--sans);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+.drawer-more:hover { color: var(--ink-dim); }
+
+.art-group { margin-bottom: 12px; }
+.art-group h4 {
+  margin: 0 0 4px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-faint);
+  padding: 0 4px;
+}
+.art {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 5px 8px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  border-left: 2px solid transparent;
+}
+.art:hover { background: var(--bg-raised); }
+.art .n {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.art .d { font-size: 10.5px; color: var(--ink-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.art.write { border-left-color: var(--user); }
+.art.edit { border-left-color: var(--warn); }
+.art.read { border-left-color: var(--line); }
+.art-empty { color: var(--ink-faint); font-size: 12px; padding: 10px; }
+
+/* ── prototype rows (SPEC 135) ──────────────────────────────
+   Version chains fold under their latest: the head row carries the base name and a vN badge, the
+   older versions sit indented behind a hairline, named by what changed rather than by filename. */
+.proto {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.proto:hover { background: var(--bg-raised); }
+.proto .n {
+  flex: 1 1 auto;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.proto-old .n { color: var(--ink-faint); }
+.proto .d { flex: 0 0 auto; font-family: var(--mono); font-size: 10.5px; color: var(--ink-faint); }
+.proto-v {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-faint);
+  background: var(--bg-raised);
+  border-radius: 8px;
+  padding: 0 6px;
+}
+.proto-open {
+  flex: 0 0 auto;
+  background: none;
+  border: none;
+  color: var(--ink-faint);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0 2px;
+  opacity: 0;
+}
+.proto:hover .proto-open { opacity: 1; }
+.proto-open:hover { color: var(--accent); }
+.proto-chain { margin-left: 14px; border-left: 1px solid var(--line-soft); }
+
+/* The landing flash: a prototype row jumped the transcript here, and the eye needs the where. */
+.jumped { animation: jump-flash 1.6s ease-out; }
+@keyframes jump-flash {
+  from { background: #fff7e0; }
+  to { background: transparent; }
+}
+
+/* ── document view ─────────────────────────────────────────────── */
+
+#layout.doc .tool,
+#layout.doc .steps,
+#layout.doc .thinking,
+#layout.doc .msg.meta { display: none; }
+#layout.doc #transcript-body { padding-left: 40px; padding-right: 40px; }
+/* Document view keeps its own padding and nothing else: the 82ch cap left with the 78ch one. */
+
+.hidden { display: none !important; }
+
+/* ── toast ─────────────────────────────────────────────────────── */
+
+#toast {
+  position: fixed;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  padding: 7px 14px;
+  border-radius: var(--radius);
+  font-size: 12.5px;
+  font-family: var(--mono);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+  max-width: 70vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#toast.show { opacity: 1; }
+#toast.bad { border-color: var(--error); color: var(--error); }
+
+/* ── input path: composer + permit cards (SPEC §Input path) ─────────── */
+
+/* The hidden attribute must beat display:flex — a record tab hides the composer with it. */
+#composer[hidden] { display: none; }
+#composer {
+  /* 0 0 auto, never 1 1: as a shrinkable flex child a tall textarea pushed the composer past the
+     bottom of the window and the send button off the screen. It sizes to its content and the
+     transcript above it takes what is left. */
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 16px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  /* The gap the reader sees between the last message and the bar (SPEC 115's 48–96 band) belongs
+     to the SPACER below, not to a margin here: a margin would collapse with the last message's own
+     while the composer is in the flow and stop collapsing the moment it docks, which is a 20px
+     change in the scroller's height at exactly the moment 182 says nothing may move (measured). */
+  margin-top: 0;
+}
+
+/* DOCKED (SPEC 199): a draft whose place in the flow has scrolled away sits on the floor of the
+   column instead, so he can read three screens up and write at the same time. Never on focus, never
+   on content alone — `client/dock.ts` owns the decision and is pinned as a property. */
+#composer.docked {
+  position: absolute;
+  left: 26px;
+  right: 26px;
+  bottom: 14px;
+  z-index: 6;
+  box-shadow: 0 8px 26px rgb(0 0 0 / 14%);
+}
+/* The one thing that says "this is a draft you left up there". */
+#composer.docked::before {
+  content: "unsent";
+  position: absolute;
+  top: -9px;
+  left: 12px;
+  background: var(--gold);
+  color: #ffffff;
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  padding: 1px 7px;
+  border-radius: 9px;
+}
+/* UNDER A RECORD (2026-08-06, restored 2026-08-12): the same composer, hung off the centre column
+   instead of the chat's scroller, so reading the record and talking to the project stay one
+   activity. It never docks here — there is no flow for its place to scroll out of — so these are
+   the only rules it needs: the docked bar's own insets, and no absolute positioning. */
+#composer.under-record {
+  margin: 0 26px 14px;
+}
+
+/* The spacer holds the composer's place while it is docked, so the scroller's height — and every
+   scroll position measured against it — is the same in both states (SPEC 182). Its height is
+   written by `syncDock` from the composer's MEASURED height, on every change, never once at dock
+   time: `fitComposer` runs the box up to 40% of the window and a spacer set once diverges by every
+   line typed after it. */
+/* Empty for most of a session. Inline styles on the element made the 5px unconditional, and
+   an empty container that still takes 5px pushes the scroll region off the pane's floor —
+   journey12 measured 5 against its ceiling of 2 (2026-09-01). Spacing only once it has rows. */
+#subagents-container:not(:empty) {
+  padding: 0 10px;
+  margin-bottom: 5px;
+}
+
+#composer-anchor {
+  height: 0;
+  /* The gap at rest, and the reason it lives here: it is part of the space the composer occupies,
+     so it is part of what the spacer must hold. `syncDock` writes `height` = this + the box. */
+  min-height: 56px;
+  flex: 0 0 auto;
+}
+
+/* The way back to a composer that scrolled away empty (SPEC 184). It and the docked bar are never
+   on screen together: a draft that has scrolled away is docked, and a docked composer is visible. */
+#write-pill {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 16px;
+  z-index: 7;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 16px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--bg-raised);
+  color: var(--ink-dim);
+  font-family: var(--sans);
+  font-size: 12.5px;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 12%);
+}
+#write-pill:hover { color: var(--ink); }
+#write-pill[hidden] { display: none; }
+
+/* The badge for a permission card that is off screen (SPEC 184). It carries one card's identity and
+   scrolls to it; it never answers anything. */
+#permit-badge {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  top: 12px;
+  z-index: 7;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border: none;
+  border-radius: 20px;
+  background: var(--warn);
+  color: #ffffff;
+  font-family: var(--sans);
+  font-size: 12.5px;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 18%);
+}
+#permit-badge[hidden] { display: none; }
+
+/* ── the marker gutter (SPEC 192, experimental) ──────────────────────
+   One point per turn, placed where that turn sits in the whole conversation. Shape says who and
+   what: a filled green dot is his, a hollow blue one is mine, a square carries a prototype, a gold
+   diamond a build plan.
+
+   It floats OVER the chat and takes no part in the transcript's layout — `position: absolute` in
+   `#chat-area`, outside the scroller — so nothing here can move the text, change the scroller's
+   height, or add a strip the reader can scroll into. That is not tidiness: 199 and 182 are pinned on
+   exactly those numbers, and this is the requirement that comes out first if it costs them.
+
+   The container ignores the mouse and the points take it back, so the transcript underneath stays
+   selectable everywhere between them. */
+#gutter {
+  position: absolute;
+  right: 6px;
+  top: 16px;
+  bottom: 16px;
+  width: 20px;
+  z-index: 5;
+  pointer-events: none;
+}
+#gutter[hidden] { display: none; }
+.mm {
+  position: absolute;
+  right: 2px;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: translateY(-50%);
+}
+/* The bead is a child rather than the button itself, so hover can scale the mark without moving the
+   hit target out from under the cursor. */
+.mm i {
+  display: block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--bg);
+  border: 1.5px solid var(--accent);
+  transition: transform 0.12s ease, background 0.12s ease;
+}
+.mm.user i { background: var(--user); border-color: var(--user); }
+.mm.proto i {
+  border-radius: 2px;
+  width: 9px;
+  height: 9px;
+  border-color: var(--ink-dim);
+  background: var(--bg-sunken);
+}
+.mm.plan i {
+  border-radius: 2px;
+  width: 9px;
+  height: 9px;
+  transform: rotate(45deg);
+  border-color: var(--gold);
+  background: #fdf4e4;
+}
+.mm:hover i { transform: scale(1.45); }
+.mm.plan:hover i { transform: rotate(45deg) scale(1.45); }
+.mm.on i { box-shadow: 0 0 0 3px rgb(59 110 204 / 22%); }
+.mm.user.on i { box-shadow: 0 0 0 3px rgb(46 125 50 / 22%); }
+.mm.on::after {
+  content: "";
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  width: 10px;
+  height: 1px;
+  background: var(--line);
+}
+/* The whole message, not a truncation of it: the point exists so he can find a turn without reading
+   the transcript, and half a sentence is not enough to recognise one by. */
+.mm .tip {
+  position: absolute;
+  right: 20px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--ink);
+  color: #ffffff;
+  font-size: 11.5px;
+  line-height: 1.45;
+  padding: 7px 10px;
+  border-radius: 6px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+  width: max-content;
+  max-width: min(420px, 42vw);
+  max-height: 280px;
+  overflow: hidden;
+  white-space: normal;
+  text-align: left;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 22%);
+  z-index: 9;
+}
+.mm .tip b {
+  display: block;
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  opacity: 0.6;
+  margin-bottom: 3px;
+  font-weight: 700;
+}
+.mm:hover .tip { opacity: 1; }
+
+/* The toolbar wraps; send and stop never do. Whatever the width, the button you need is on it. */
+#composer-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+#composer-send,
+#composer-stop { flex: 0 0 auto; margin-left: auto; }
+#composer-stop + #composer-send { margin-left: 0; }
+
+/* ── the working indication (SPEC 96) ────────────────────────────────
+   loom's first and only animation. Every other surface here is a reading surface and stays still;
+   this one exists precisely BECAUSE stillness is the bug — a turn in flight looked identical to a
+   dead one. It first lived in the composer's toolbar; User, 2026-08-07: "you did it in the bottom
+   panel and you should have done it at the bottom of chat like in vs code" — so it is the last line
+   of the transcript instead (built and appended in `drawStep()`, client/app.ts), the same place
+   VS Code's chat and the CLI's own status line put it: part of the conversation, not a composer
+   control. It stays 11px, so the cost it imposes on reading is a ring at the edge of the eye, not
+   movement in the text.
+
+   Its 78ch cap came off with the three that 183 names, though 183 does not name this one. The
+   reason is alignment, not the requirement: the working row is a line of the transcript and sits
+   directly under the messages, so a cap here that the messages no longer have would make the one
+   moving line on the page the only narrow one. User's instruction, mid-build. */
+.chat-working {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 22px;
+}
+.chat-working[hidden] { display: none; }
+#composer-spin {
+  flex: 0 0 auto;
+  width: 11px;
+  height: 11px;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: loom-spin 0.7s linear infinite;
+}
+#composer-spin[hidden] { display: none; }
+@keyframes loom-spin { to { transform: rotate(360deg); } }
+
+/* Rotation is the part that costs people something; "it is alive" is not. So reduced motion keeps
+   the signal and drops the spin — a slow fade, which no vestibular guidance objects to. */
+@media (prefers-reduced-motion: reduce) {
+  #composer-spin {
+    animation: loom-breathe 2s ease-in-out infinite;
+    border-color: var(--accent);
+  }
+  @keyframes loom-breathe {
+    0%, 100% { opacity: 0.25; }
+    50% { opacity: 1; }
+  }
+}
+#composer-state {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--ink-faint);
+  font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* What typing into this session costs, and the way to stop paying it (SPEC §Bar). */
+/* The one usage badge (usage-bar, 2026-08-26) — replaces the old #bar-meter (fitted-estimate
+   block meter) and #cache-state, which used to draw as two competing rows. Variant C from the
+   prototype (mockups/usage-bar-2026-08-26-v3.html, section 1, fourth card): a severity-coloured
+   dot, the 5-hour window percent, the prompt-cache countdown and the time to reset, one line.
+   User asked twice for the foot to be more compact — this MUST NOT wrap, so unlike the old rule
+   it does not grow with the text; it stays fixed at 11px mono in the 300px rail. */
+#bar-meter {
+  position: relative;
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-family: var(--mono);
+  line-height: 1.35;
+  color: var(--ink-faint);
+  cursor: default;
+}
+#bar-meter .r {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+#bar-meter .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: 0 0 auto;
+}
+
+#bar-meter.warm .dot { background: var(--warn); }
+#bar-meter.hot .dot { background: var(--error); }
+#bar-meter.warm .p { color: var(--warn); }
+#bar-meter.hot .p { color: var(--error); }
+
+#bar-meter .p { color: var(--ink); font-weight: 600; }
+#bar-meter .ctx { color: var(--ink); }
+#bar-meter .cache { color: var(--ink-dim); }
+#bar-meter .sep { color: var(--line); }
+#bar-meter .t { margin-left: auto; color: var(--ink-faint); }
+
+/* Micro-meters strip */
+.micro-strip {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2.5px;
+  height: 13px;
+  padding: 1px 3px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  margin-left: 5px;
+  cursor: pointer;
+  flex: 0 0 auto;
+  transition: border-color 0.15s ease;
+}
+.micro-strip:hover {
+  border-color: var(--accent);
+  background: var(--bg-raised);
+}
+
+.micro-bar {
+  width: 3.5px;
+  height: 10px;
+  background: var(--line);
+  border-radius: 1px;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+.micro-bar i {
+  width: 100%;
+  display: block;
+  background: var(--accent);
+  border-radius: 1px;
+  transition: height 0.2s ease, background 0.2s ease;
+}
+
+.micro-bar.active {
+  box-shadow: 0 0 0 1px var(--ink);
+}
+.micro-bar.active i {
+  background: var(--gold);
+}
+.micro-bar.warn i {
+  background: var(--warn);
+}
+.micro-bar.hot i {
+  background: var(--error);
+}
+.micro-bar.jules i {
+  background: var(--user);
+}
+.micro-bar.unavailable {
+  opacity: 0.35;
+  background: var(--line-soft);
+}
+.micro-bar.unavailable i {
+  height: 0% !important;
+}
+.micro-bar.stale i {
+  background: var(--ink-faint);
+}
+
+/* Detail Tooltip / Panel (#bar-tip) */
+.bar-tip {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  /* Anchored to the RIGHT edge and sized by its contents, instead of stretched across the drawer.
+     Pinned to the drawer's ~300px it had to cut something on every row, and what it cut was the
+     label — the pool rows read "C…" and "Ju…", and an unavailable pool showed a reason with no
+     way to tell which pool it belonged to (2026-09-02: "i can barely read text there"). It grows
+     leftwards over the transcript, which is empty space at the foot of the column. */
+  right: 0;
+  left: auto;
+  width: max-content;
+  min-width: 100%;
+  max-width: min(430px, 92vw);
+  z-index: 40;
+  padding: 9px 12px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.16);
+  color: var(--ink);
+  font-size: 11px;
+  line-height: 1.45;
+  pointer-events: auto;
+}
+
+.bar-tip[hidden] {
+  display: none !important;
+}
+
+.bar-tip .tip-head {
+  margin-top: 8px;
+  color: var(--ink-faint);
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 700;
+  border-bottom: 1px solid var(--line-soft);
+  padding-bottom: 3px;
+}
+.bar-tip .tip-head:first-child {
+  margin-top: 0;
+}
+
+.bar-tip .tip-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 1.5px 0;
+  font-family: var(--mono);
+}
+.bar-tip .tip-row.active-pool {
+  color: var(--accent);
+  font-weight: 600;
+}
+.bar-tip .tip-row.active-pool .tip-label::before {
+  content: "▸ ";
+  color: var(--accent);
+}
+.bar-tip .tip-row.sub-row {
+  padding-left: 10px;
+  font-size: 10px;
+  opacity: 0.85;
+}
+.bar-tip .tip-row.sub-row .tip-label {
+  color: var(--ink-faint);
+}
+.bar-tip .tip-row.unavailable .tip-value {
+  color: var(--ink-faint);
+  font-style: italic;
+}
+
+.bar-tip .tip-label {
+  color: var(--ink-dim);
+  white-space: nowrap;
+  /* The label is the shorter half and the one that names the thing, so it keeps its width and the
+     value gives way. It used to be the other way round. */
+  flex: 0 0 auto;
+}
+.bar-tip .tip-value {
+  font-family: var(--mono);
+  text-align: right;
+  white-space: nowrap;
+  color: var(--ink);
+  font-weight: 500;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* A failure reason is a sentence, not a figure: let it wrap onto as many lines as it needs rather
+   than trailing off mid-word, which is how the two Google pools read as anonymous italics. */
+.bar-tip .tip-row.unavailable {
+  align-items: flex-start;
+}
+.bar-tip .tip-row.unavailable .tip-value {
+  white-space: normal;
+  overflow: visible;
+  text-align: right;
+}
+
+.bar-tip .tip-note {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line-soft);
+  color: var(--ink-faint);
+  font-size: 10px;
+  display: flex;
+  justify-content: space-between;
+}
+
+/* The cache figure: amber under 10 minutes, red once the prefix has lapsed (drawBadge sets
+   `.cache.cwarn` / `.cache.cold` on #bar-cache). */
+#bar-meter .cache.cwarn { color: var(--warn); font-weight: 600; }
+#bar-meter .cache.cold { color: var(--error); font-weight: 600; }
+
+/* A stale reading (the endpoint fetch failed) must look stale, not current — the scenario this
+   build exists to stop faking. `warm`/`hot` are never set together with `stale` (drawBadge), so
+   this only has to grey what stale leaves behind. */
+#bar-meter.stale .dot { background: var(--ink-faint); }
+#bar-meter.stale .p { color: var(--ink-faint); font-weight: 400; }
+#composer-new { flex: 0 0 auto; font-size: 12px; }
+
+#composer-text {
+  flex: 1 1 auto;
+  resize: none;
+  min-height: 38px;
+  max-height: 30vh;
+  padding: 9px 12px;
+  background: var(--bg-sunken);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.45;
+}
+#composer-text:focus { outline: 1px solid var(--accent); }
+#composer-send {
+  padding: 9px 18px;
+  background: var(--accent);
+  color: #ffffff;
+  border: none;
+  border-radius: var(--radius);
+  font-family: var(--sans);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+#composer-send:hover { filter: brightness(1.1); }
+#composer-send:disabled { background: var(--line); color: var(--ink-faint); cursor: default; }
+
+/* In the FLOW now (SPEC 185), not a fixed strip between the scroller and a bar that no longer sits
+   there. The cards render where they were asked, in message order, and 184's badge is what makes
+   that safe: a card can scroll away, so something must say it is waiting. Each card is its own child
+   of `#transcript-body`; the container they used to share is gone, and its `:empty` rule with it. */
+.permit {
+  margin: 10px 0;
+  border: 1px solid var(--warn);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  overflow: hidden;
+}
+.permit-head {
+  padding: 8px 12px;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--warn);
+}
+.permit-input {
+  margin: 0;
+  padding: 8px 12px;
+  max-height: 200px;
+  overflow: auto;
+  background: var(--bg-sunken);
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.permit-actions { display: flex; gap: 8px; padding: 8px 12px; }
+.permit-btn {
+  padding: 6px 16px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  background: var(--bg-sunken);
+  color: var(--ink);
+}
+.permit-btn.allow { background: var(--user); color: #ffffff; border-color: var(--user); }
+.permit-btn.deny { background: var(--bg-sunken); color: var(--error); border-color: var(--error); }
+.permit-btn:hover { filter: brightness(1.1); }
+
+/* ── login overlay (SPEC §Auth) ─────────────────────────────────────── */
+
+#login {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(13, 14, 20, 0.92);
+  z-index: 50;
+}
+#login[hidden] { display: none; }
+.login-box {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(360px, 90vw);
+  padding: 28px;
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.login-title { font-family: var(--mono); font-size: 18px; color: var(--accent); }
+.login-hint { font-size: 13px; color: var(--ink-dim); }
+.login-box input {
+  padding: 9px 12px;
+  background: var(--bg-sunken);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-family: var(--mono);
+}
+.login-box button {
+  padding: 9px 12px;
+  background: var(--accent);
+  color: #ffffff;
+  border: none;
+  border-radius: var(--radius);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* ── the Active list (SPEC 247) ─────────────────────────────────────── */
+
+/* It sits ABOVE the tree and is capped at roughly six rows: past that it stops being a glance and
+   starts being a second tree, and the tree is the thing that must keep the rail's height. `flex:
+   none` so it never takes the scroll the tree needs. */
+/* `.pane-head` sets `display: flex`, which BEATS the user-agent's `[hidden] { display: none }` —
+   so the heading stayed on screen with the attribute set, and an empty list still cost a row.
+   Caught by journey35's empty case, 2026-08-26. */
+.active-head[hidden],
+.active-body[hidden] {
+  display: none;
+}
+.active-body {
+  flex: 0 0 auto;
+  max-height: 152px;
+  overflow-y: auto;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+/* The lists the reader scrolls to pick a session (SPEC: "reclaim the scrollbar gutter"). A scrollbar
+   reserves horizontal width and the 300px panel is exactly where every pixel counts, so this hides
+   the native bar entirely and replaces it with a CSS bottom-fade that appears when there is content
+   below the fold and vanishes when the list is at the bottom. */
+#active-body, #tree-body {
+  scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 24px), transparent 100%);
+  mask-image: linear-gradient(to bottom, black calc(100% - 24px), transparent 100%);
+}
+#active-body::-webkit-scrollbar,
+#tree-body::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+@supports (animation-timeline: scroll()) {
+  #active-body, #tree-body {
+    animation: loom-scroll-fade linear forwards;
+    animation-timeline: scroll(self block);
+  }
+}
+@keyframes loom-scroll-fade {
+  0%, 99% {
+    -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 24px), transparent 100%);
+    mask-image: linear-gradient(to bottom, black calc(100% - 24px), transparent 100%);
+  }
+  100% {
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+}
+.active-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 10px;
+  font-size: 13px;
+  color: var(--ink-dim);
+  cursor: pointer;
+}
+.active-item:hover { color: var(--ink); background: var(--bg-raised); }
+.active-item.current { color: var(--ink); background: var(--bg-raised); }
+/* The mark is literally the tree's — `.active-item` carries the same `status-*` class its tree row
+   does, so every rule under `.tree-dot` (status colour, the NEW badge, the unread letter, the ring)
+   applies here without a second copy that could drift. */
+.active-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.active-age {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── project tree + centre tabs (SPEC §Records) ─────────────────────── */
+
+/* The tree now OWNS the rail (SPEC 59, 187): the toggles are at the foot of the right column and
+   the session list became a select under the chat row, so nothing below it needs the height back. */
+#tree-body {
+  overflow-y: auto;
+  padding: 4px 0 8px;
+  flex: 1 1 auto;
+}
+.tree-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 10px;
+  font-size: 13px;
+  color: var(--ink-dim);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tree-item:hover { color: var(--ink); background: var(--bg-raised); }
+.tree-item.current { color: var(--ink); background: var(--bg-raised); }
+/* The mark box is a fixed 14×12 whatever it draws, so a project turning unread does not shift its
+   own label sideways. Status is carried as COLOUR — one declaration per status, inherited by the
+   dot, the letter and the ring alike. */
+.tree-dot {
+  width: 14px;
+  height: 12px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1.6px;
+  color: var(--ink-faint);
+  /* The cache bar is positioned against this box, so it sits under whatever the icon drew without
+     widening the slot or moving the label (SPEC 257). */
+  position: relative;
+}
+.tree-dot::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.status-active .tree-dot { color: var(--user); }
+.status-framing .tree-dot { color: var(--accent); }
+.status-parked .tree-dot { color: var(--warn); }
+.status-done .tree-dot { color: var(--ink-faint); }
+.status-abandoned .tree-dot { color: var(--error); }
+
+/* Born in the last days: the word instead of the dot, in the status's own colour. */
+.tree-dot.new::before { display: none; }
+.tree-dot.new {
+  width: auto;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  padding: 0 2px;
+  line-height: 10px;
+  height: auto;
+}
+
+/* A reply is waiting here and this device has not shown it (SPEC 62). */
+.tree-dot.unread::before { display: none; }
+.tree-dot.unread svg { width: 13px; height: 9px; display: block; }
+.tree-dot.unread svg rect { fill: none; stroke: currentColor; stroke-width: 1.3; }
+.tree-dot.unread svg path { fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linejoin: round; }
+
+/* A turn is producing output here RIGHT NOW (SPEC 259): three dots marching left to right, in the
+   row's own status colour. The second animation loom has ever had, and bounded to the icon slot —
+   SPEC 260 revises 102, which said the composer ring was the only one. */
+.tree-dot.working::before { display: none; }
+.tree-dot.working .march {
+  width: 3.4px;
+  height: 3.4px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.25;
+  animation: tree-march 1.1s ease-in-out infinite;
+}
+@keyframes tree-march {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* Still, at full opacity: the row says the same thing without moving (SPEC 260). */
+  .tree-dot.working .march { animation: none; opacity: 1; }
+}
+
+/* What is LEFT of the prompt-cache hour (SPEC 257): a faint track for the whole window and a fill
+   for the remainder, shortening from the right. It goes under the unread letter and the plain dot
+   and under nothing else, and once the window is spent NEITHER is drawn — `drawCacheBar` removes
+   both, so a cold row is the plain row it was before this existed. */
+.tree-dot .cache-track,
+.tree-dot .cache-fill {
+  position: absolute;
+  left: 0.5px;
+  bottom: 0;
+  height: 1.6px;
+  border-radius: 0.8px;
+  background: currentColor;
+  pointer-events: none;
+}
+.tree-dot .cache-track { width: 13px; opacity: 0.2; }
+/* Amber under a FIFTH of the window, not under a fixed ten minutes: the CLI also writes a 5-minute
+   bucket, which a fixed threshold would paint amber from birth. */
+.tree-dot .cache-fill.low { background: var(--warn); }
+
+/* User was writing here inside the active window. `outline` rather than a border or box-shadow:
+   it costs no layout and needs no background-matching gap, so it survives the hover tint. */
+.tree-dot.active {
+  outline: 1.5px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 4px;
+}
+.tree-item.current .tree-label, .tree-dot.active + .tree-label { font-weight: 600; }
+.tree-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+/* Focus (SPEC 80). Invisible until the row is hovered, so an unused control costs no attention;
+   GOLD and permanently visible once in force, because a panel that has hidden most of itself must
+   say so from the row that did it. `visibility` rather than `display` so the label's available
+   width never changes between hover states — a name that reflows on mouse-over reads as a glitch. */
+.tree-focus {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  margin-left: 2px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--ink-faint);
+  visibility: hidden;
+}
+.tree-focus svg { width: 13px; height: 13px; display: block; }
+.tree-focus svg circle, .tree-focus svg path { fill: none; stroke: currentColor; stroke-width: 1.3; }
+.tree-focus svg .pupil { fill: currentColor; stroke: none; }
+.tree-item:hover .tree-focus { visibility: visible; }
+.tree-focus:hover { color: var(--ink); }
+.tree-focus.on { visibility: visible; color: var(--gold); }
+/* No hover on a touch rail, so the control has to be permanently reachable there — dimmed rather
+   than hidden, which is the closest honest translation of "appears when you reach for it". */
+@media (hover: none) {
+  .tree-focus { visibility: visible; opacity: 0.4; }
+  .tree-focus.on { opacity: 1; }
+}
+.tree-empty { padding: 6px 10px; font-size: 12px; color: var(--ink-faint); }
+
+/* Collapse (the twist). Same discipline as the crosshair: invisible until the row is hovered,
+   permanently visible once it is hiding something — then it carries the count of what it hid. */
+.tree-twist-slot {
+  flex: 0 0 auto;
+  min-width: 12px;
+  display: inline-flex;
+  justify-content: center;
+}
+.tree-twist {
+  flex: 0 0 auto;
+  padding: 0 2px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--ink-faint);
+  font-size: 10px;
+  line-height: 15px;
+  visibility: hidden;
+  white-space: nowrap;
+}
+.tree-item:hover .tree-twist { visibility: visible; }
+.tree-twist:hover { color: var(--ink); }
+.tree-twist.on { visibility: visible; }
+@media (hover: none) {
+  .tree-twist { visibility: visible; opacity: 0.5; }
+  .tree-twist.on { opacity: 1; }
+}
+
+/* ── the open list (SPEC 179) ──────────────────────────────────────
+   What the tab strip used to do, done where it costs the centre nothing: one row per member of the
+   open set, in the right column. The strip lived across the top of the reading column and appeared
+   and vanished under him (SPEC 41); a row here is always in the same place, and rows close one at a
+   time — which SPEC 39 asked for and the strip never did. */
+/* The head is gone (SPEC 197). The list starts at the top of the column with its own padding. */
+#opens {
+  flex: 0 0 auto;
+  padding: 8px 6px;
+  border-bottom: 1px solid var(--line-soft);
+  max-height: 34vh;
+  overflow-y: auto;
+}
+.open-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: none;
+  font-family: var(--sans);
+  font-size: 13px;
+  color: var(--ink-dim);
+  cursor: pointer;
+  text-align: left;
+}
+.open-row:hover { background: var(--bg-raised); color: var(--ink); }
+.open-row.on { background: var(--bg); border-color: var(--line); color: var(--ink); font-weight: 500; }
+.open-kind { font-size: 11px; width: 14px; text-align: center; color: var(--ink-faint); flex: 0 0 auto; }
+/* The title truncates rather than widening the column: real record titles are whole sentences. */
+.open-label { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.open-close {
+  border: none;
+  background: none;
+  color: var(--ink-faint);
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 14px;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+.open-close:hover { color: var(--error); }
+
+.open-row[data-kind="session"] {
+  display: block;
+  padding: 0;
+  border: none;
+  background: none;
+}
+.open-row[data-kind="session"].on {
+  background: none;
+  border: none;
+}
+
+/* Two Session Streams (SPEC google-pro-models) */
+#session-streams {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 5px 8px;
+  background: var(--bg-sunken);
+  border-bottom: 1px solid var(--line-soft);
+  box-sizing: border-box;
+  flex: 0 0 auto;
+}
+
+.stream-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 23px;
+  padding: 0 6px 0 4px;
+  border-radius: 4px;
+  border-left: 3px solid transparent;
+  transition: opacity 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.stream-row.active {
+  border-left-color: var(--accent);
+  background: var(--bg-raised);
+  opacity: 1;
+}
+
+.stream-row:not(.active) {
+  opacity: 0.52;
+}
+
+.stream-row:not(.active):hover {
+  opacity: 0.85;
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.stream-glyph {
+  font-size: 11px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  flex: 0 0 14px;
+  user-select: none;
+}
+/* Each family wears its own brand colour: Anthropic is the warm one, Google the blue one.
+   They were the other way round for an afternoon and read as confusing (User, 2026-09-02). */
+.stream-claude .stream-glyph { color: var(--gold); }
+.stream-google .stream-glyph { color: var(--accent); }
+
+.stream-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 22px;
+  padding: 1px 6px;
+  font-size: 11.5px;
+  font-family: var(--sans);
+  background: var(--bg);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.stream-select:disabled {
+  background: var(--bg-sunken);
+  color: var(--ink-faint);
+  border-color: var(--line-soft);
+  cursor: default;
+}
+.stream-select:focus {
+  outline: 1px solid var(--accent);
+}
+
+.stream-add {
+  flex: 0 0 20px;
+  width: 20px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--ink-dim);
+  font-size: 13px;
+  font-family: var(--mono);
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  transition: all 0.12s;
+}
+.stream-add:hover {
+  color: var(--ink);
+  border-color: var(--ink-faint);
+  background: var(--bg-raised);
+}
+
+/* The foot of the right column (SPEC 177): the update bar today, the numbers and toggles at 186. */
+#drawer-foot { flex: 0 0 auto; border-top: 1px solid var(--line-soft); padding: 8px 10px; }
+#drawer-foot:empty { display: none; }
+
+/* More clearance than the transcript gets: a task's result form opens at the bottom of a long
+   record and must have somewhere to open into. Still a fixed distance, not a share of the window. */
+#record-body { padding: 18px 26px 160px; }
+.record-facts {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-bottom: 14px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 13px;
+  color: var(--ink-dim);
+}
+.record-status {
+  padding: 2px 10px;
+  border-radius: 10px;
+  font-family: var(--mono);
+  font-size: 12px;
+  border: 1px solid var(--line);
+}
+.record-status.status-active { color: var(--user); border-color: var(--user); }
+.record-status.status-framing { color: var(--accent); border-color: var(--accent); }
+.record-status.status-parked { color: var(--warn); border-color: var(--warn); }
+.record-status.status-abandoned { color: var(--error); border-color: var(--error); }
+.record-status.status-done { color: var(--ink-faint); border-color: var(--line-soft); }
+
+/* ── closing the project itself (SPEC 65) ───────────────────────────── */
+/* `display: contents` puts the button inline among the facts and lets the form take its own row. */
+.record-life { display: contents; }
+.record-act {
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--ink-dim);
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.record-act:hover { color: var(--ink); border-color: var(--ink-faint); }
+/* No cap either (SPEC 193). A field that stops short of the list it writes into is a ragged edge in
+   the middle of the record, and the reason 183 exempted forms — "a form is not prose" — argues for
+   a MEASURE, which the centre column no longer has anywhere. */
+.record-form {
+  flex: 0 0 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+.record-form-label { font-size: 12px; color: var(--ink-dim); }
+.record-form-text {
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  resize: vertical;
+}
+.record-form-text.bad { border-color: var(--error); }
+.record-form-actions { display: flex; gap: 8px; }
+.record-save,
+.record-cancel {
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: none;
+  color: var(--ink-dim);
+  cursor: pointer;
+}
+.record-save { color: var(--ink); border-color: var(--ink-faint); }
+.record-save:hover { border-color: var(--user); color: var(--user); }
+.record-cancel:hover { color: var(--ink); }
+.record-up {
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--ink-dim);
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.record-up:hover { color: var(--ink); border-color: var(--ink-faint); }
+/* No cap (SPEC 183). 183 exempted the record's FORMS — the fields, the hypotheses, the tasks — and
+   the prose got swept in with them: at 1600px the column is 1030px and this held the text to 609px,
+   which is the same claustrophobia the build set out to remove, in the one place a record is read.
+   User, looking at the built thing: "project pages and maybe files are rendered not at full
+   width." */
+.record-md { max-width: none; }
+
+/* ── hypotheses in a record (SPEC §Tasks) ───────────────────────────── */
+/* The standing is what a reader scans for, so it sits at the front of the row as a chip. Refuted
+   claims keep full contrast — a refuted hypothesis is the most valuable line in a record. */
+/* No cap (SPEC 193, revising 183). 183 exempted the record's FORMS and this list was swept in with
+   them, but a hypothesis row is not a form — it is the content, the line a reader scans. User on
+   the built thing: "not all things used the full horizontal space, for instance tasks and
+   hypothesis and maybe other things." */
+.hypos {
+  list-style: none;
+  margin: 4px 0 20px;
+  padding: 0;
+}
+.hypo {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 4px 8px 4px 4px;
+  border-radius: var(--radius);
+  border-bottom: 1px solid var(--line-soft);
+}
+.hypo:hover { background: var(--bg-raised); }
+.hypo-main { flex: 1; min-width: 0; }
+.hypo-claim { font-weight: 600; line-height: 1.38; }
+.hypo-evidence {
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--ink-dim);
+  margin-top: 1px;
+}
+.hypo-standing {
+  flex: none;
+  margin-top: 3px;
+  padding: 1px 6px;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: nowrap;
+  color: var(--ink-faint);
+  cursor: pointer;
+}
+/* The picker: the five words this claim is not, laid out under it. Six legal words total, so a
+   menu is the whole vocabulary — there is nothing to type and nothing to get wrong. */
+.hypo-picker {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 2px 27px;
+}
+.hypo-pick {
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 1px 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ink-dim);
+  cursor: pointer;
+}
+.hypo-pick:hover { border-color: var(--accent); color: var(--accent); }
+.hypo-pick.is-refuted:hover, .hypo-pick.is-disproven:hover { border-color: var(--error); color: var(--error); }
+.hypo-pick.is-supported:hover, .hypo-pick.is-confirmed:hover { border-color: var(--user); color: var(--user); }
+.hypo.is-open .hypo-standing { border-color: var(--accent); color: var(--accent); }
+.hypo.is-supported .hypo-standing,
+.hypo.is-confirmed .hypo-standing { border-color: var(--user); background: var(--user); color: #ffffff; }
+.hypo.is-half-supported .hypo-standing { border-color: var(--warn); color: var(--warn); }
+.hypo.is-refuted .hypo-standing,
+.hypo.is-disproven .hypo-standing { border-color: var(--error); background: var(--error); color: #ffffff; }
+.hypo.is-unstated .hypo-standing { border-style: dashed; }
+
+/* ── tasks in a record (SPEC §Tasks) ────────────────────────────────── */
+/* No cap (SPEC 193, revising 183) — same reason as `.hypos` above: a task row is the record's
+   content, not one of the forms 183 exempted. The drawer's copy sets its own `max-width: none`
+   further down and is unaffected by this. */
+.tasks {
+  list-style: none;
+  margin: 4px 0 20px;
+  padding: 0;
+}
+/* Dense by request (2026-08-06): "The tasks are too sparse visually, they take up so much space,
+   its hard to look at the list of tasks." Half the vertical padding, tighter line height, and the
+   result line only shows when a task is actually done. */
+.task {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 4px 8px 4px 4px;
+  border-radius: var(--radius);
+  border-bottom: 1px solid var(--line-soft);
+}
+.task:hover { background: var(--bg-raised); }
+.task-main { flex: 1; min-width: 0; }
+.task-title { font-weight: 600; line-height: 1.38; }
+.task-need, .task-result {
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--ink-dim);
+  margin-top: 1px;
+}
+/* A done task's result is the point; an open task's leftover fields are noise. Collapsed to one
+   line each, expanded on hover or focus. */
+.task.is-open .task-result,
+.task.is-doing .task-result {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task:hover .task-result { overflow: visible; white-space: normal; }
+.task-key { color: var(--ink-faint); font-family: var(--mono); font-size: 12px; }
+
+/* Retitling in place: the field takes the name's own metrics, so the row does not jump when the
+   text becomes an input. Only the name is editable — the fields under it are earned history. */
+.task-title { cursor: text; }
+.task-title-edit {
+  width: 100%;
+  background: var(--bg);
+  color: var(--ink);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 0 5px;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: 600;
+  line-height: 1.38;
+}
+/* The add row sits at the end of the list, as a button until it is wanted. */
+.task-add { list-style: none; padding: 6px 4px 0; }
+.task-add-form { display: flex; align-items: center; gap: 8px; }
+.task-add-text {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 5px 8px;
+  font-family: var(--sans);
+  font-size: 13px;
+}
+.task-add-text:focus { outline: 1px solid var(--accent); }
+.task-add-text.bad { border-color: var(--error); }
+
+/* The box: square, monospaced glyph, one click from every state to the next. */
+.task-box {
+  flex: none;
+  width: 19px;
+  height: 19px;
+  margin-top: 2px;
+  border: 1.5px solid var(--ink-faint);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--ink-dim);
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+.task-box:hover { border-color: var(--accent); color: var(--accent); }
+.is-doing .task-box { border-color: var(--accent); color: var(--accent); font-weight: 700; }
+.is-done .task-box { border-color: var(--user); background: var(--user); color: #ffffff; }
+.is-dropped .task-box { border-color: var(--line); color: var(--ink-faint); }
+.is-promoted .task-box { border-color: var(--warn); color: var(--warn); }
+.is-done .task-title { color: var(--ink-dim); font-weight: 500; }
+.is-dropped .task-title { text-decoration: line-through; color: var(--ink-faint); }
+.is-dropped .task-need, .is-dropped .task-result { color: var(--ink-faint); }
+.is-promoted .task-title { color: var(--ink-dim); }
+
+/* A prose item has no box: loom does not guess a status, it offers to give it one. */
+.task.prose { opacity: 0.85; }
+.task-addbox {
+  flex: none;
+  width: 19px;
+  height: 19px;
+  margin-top: 2px;
+  border: 1.5px dashed var(--line);
+  border-radius: 4px;
+  background: none;
+  color: var(--ink-faint);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+.task-addbox:hover { border-color: var(--accent); color: var(--accent); }
+
+.task-arts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 5px; }
+.task-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.task:hover .task-actions, .task:focus-within .task-actions { opacity: 1; }
+.task-act, .task-edit {
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--ink-dim);
+  font-size: 12px;
+  padding: 2px 8px;
+  cursor: pointer;
+  font-family: var(--sans);
+}
+.task-act:hover, .task-edit:hover { color: var(--accent); border-color: var(--accent); }
+.task-edit { margin-left: 8px; padding: 0 6px; font-size: 11px; }
+
+/* ── the same rows, hosted in the 300px right column ─────────────────
+   Density only. There is ONE task component and one write path; what changes here is how much of a
+   row a narrow column can afford to show at rest, not what a row IS. Everything clamped is one
+   hover away, and the result form — the verdict gate — is left roomy on purpose: a column too
+   cramped to write a result in would quietly trade the record's honesty for a glance. */
+#drawer .tasks { max-width: none; margin: 0 0 4px; }
+#drawer .task { padding: 4px 4px 4px 2px; gap: 6px; }
+#drawer .task-title { font-size: 12.5px; line-height: 1.32; }
+#drawer .task-need,
+#drawer .task-result {
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#drawer .task:hover .task-need,
+#drawer .task:hover .task-result { overflow: visible; white-space: normal; }
+#drawer .task-key { font-size: 11px; }
+#drawer .task-box, #drawer .task-addbox { width: 17px; height: 17px; font-size: 12px; }
+#drawer .task-actions { flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+#drawer .task-act { font-size: 11px; padding: 1px 6px; }
+#drawer .task-arts { gap: 4px; margin-top: 4px; }
+/* The form is the exception to the squeeze — full width, and candidate chips that wrap rather than
+   truncate to a name no one can tell apart. */
+#drawer .task-form { padding: 8px; }
+#drawer .task-cand { max-width: 100%; }
+
+/* The verdict gate: ticking done asks what came of it before the box changes. */
+.task-form {
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-sunken);
+}
+.task-form-text {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 13px;
+  padding: 6px 8px;
+}
+.task-form-text.bad { border-color: var(--error); }
+.task-cands { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+.task-cands-label { font-family: var(--mono); font-size: 12px; color: var(--ink-faint); }
+.task-cand {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--ink-dim);
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 2px 7px;
+  cursor: pointer;
+  max-width: 22ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-cand.on { background: var(--accent); border-color: var(--accent); color: #ffffff; }
+.task-form-actions { display: flex; gap: 8px; margin-top: 10px; }
+.task-save {
+  background: var(--user);
+  border: 1px solid var(--user);
+  border-radius: var(--radius);
+  color: #ffffff;
+  font-size: 13px;
+  padding: 4px 12px;
+  cursor: pointer;
+  font-family: var(--sans);
+}
+.task-cancel {
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--ink-dim);
+  font-size: 13px;
+  padding: 4px 12px;
+  cursor: pointer;
+  font-family: var(--sans);
+}
+
+/* ── composer mode toggle ───────────────────────────────────────────── */
+#composer-mode {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--ink-faint);
+  cursor: pointer;
+  user-select: none;
+  padding-bottom: 10px;
+}
+#composer-mode input { accent-color: var(--warn); }
+#composer-mode:has(input:checked) { color: var(--warn); }
+
+/* ── model + thinking-level pickers (SPEC 49) ───────────────────────── */
+/* Quiet by default and only coloured once they leave "default", so the composer doesn't grow two
+   loud controls for a choice most turns never make. */
+.model-pick-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  position: relative;
+  margin-bottom: 10px;
+}
+.model-pick-group .composer-pick {
+  margin-bottom: 0;
+}
+.session-model-mark {
+  font-size: 10px;
+  font-family: var(--mono);
+  color: var(--ink-faint);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  user-select: none;
+}
+.composer-pick {
+  margin-bottom: 10px;
+  padding: 4px 6px;
+  max-width: 145px;
+  background: var(--bg-sunken);
+  color: var(--ink-faint);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-family: var(--sans);
+  font-size: 12px;
+  cursor: pointer;
+}
+.composer-pick:hover { border-color: var(--ink-faint); }
+.composer-pick:focus { outline: 1px solid var(--accent); }
+.composer-pick option:disabled,
+.composer-pick optgroup:disabled {
+  color: var(--ink-faint);
+  background: var(--bg-sunken);
+}
+/* Set by the client whenever the pick is not "default" — an attribute rather than :has(), so the
+   state is one thing a driven spec can read instead of a computed colour. */
+.composer-pick[data-picked] { color: var(--accent); border-color: var(--accent); }
+
+/* The chat's own box, and a positioning context for the things that float over it — the docked
+   composer, the `write` pill, the permission badge (SPEC 199, 184). It carried the wheel too, and
+   these two rules were written in that block; the wheel went at 187 and they stay. NO padding here:
+   the clearance is the transcript's own, inside the scroller (see #transcript-body). A strip of
+   #chat-area below the scroller is window nothing can ever scroll into — it clipped text mid-line
+   and User read it as a white div sitting over the page (2026-08-08).
+
+   `[hidden]` needs its own rule because `display: flex` above beats the UA sheet's `display: none`,
+   and applyCentre hides this whole box whenever the centre is not the chat. */
+#chat-area { position: relative; display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+#chat-area[hidden] { display: none; }
+
+/* ── the awareness foot (SPEC 186) ───────────────────────────────
+   The one usage badge, at the foot of the right column. It used to ride in the composer row on
+   the reasoning that it is only worth showing at the moment the cut is his; the composer scrolls
+   now, and a meter that scrolls away is not doing its job. The three view toggles (doc/think/meta)
+   that used to share this row are gone (usage-bar, 2026-08-26) — whatever `loom-view` holds on
+   this device keeps driving the render. */
+#drawer-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+#bar-meter[hidden] { display: none; }
+
+.msg-image { max-width: min(100%, 560px); border-radius: var(--radius); border: 1px solid var(--line); display: block; margin: 6px 0; }
+
+#attachments { display: flex; gap: 8px; padding: 8px 26px 0; flex-wrap: wrap; }
+#attachments[hidden] { display: none; }
+.attach-chip { position: relative; display: inline-block; }
+.attach-chip img { height: 56px; border-radius: var(--radius); border: 1px solid var(--line); display: block; }
+.attach-chip button {
+  position: absolute; top: -7px; right: -7px;
+  width: 18px; height: 18px; line-height: 1;
+  border-radius: 50%; border: 1px solid var(--line);
+  background: var(--bg); color: var(--error); cursor: pointer; font-size: 11px; padding: 0;
+}
+#composer-attach {
+  background: none; border: 1px solid var(--line); border-radius: var(--radius);
+  cursor: pointer; font-size: 15px; padding: 7px 10px;
+}
+#composer-attach:hover { border-color: var(--ink-faint); }
+
+/* ── the UI iteration round (ui record, 2026-08-05 evening) ─────────── */
+
+/* Who wrote what, at a glance: User's turns are tinted cards, the assistant stays on the page. */
+.msg.user {
+  background: #eef6ee;
+  border: 1px solid #d3e6d3;
+  border-left: 3px solid var(--user);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+}
+.msg.user .who { color: var(--user); }
+
+.tree-item.general { border-bottom: 1px solid var(--line-soft); margin-bottom: 4px; padding-bottom: 6px; }
+.tree-item.general .tree-dot { color: var(--accent); }
+
+/* Collapsing the artifacts pane leaves a handle — never a one-way door. */
+#drawer-reopen {
+  position: fixed;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 64px;
+  border: 1px solid var(--line);
+  border-right: none;
+  border-radius: var(--radius) 0 0 var(--radius);
+  background: var(--bg-raised);
+  color: var(--ink-dim);
+  cursor: pointer;
+  z-index: 30;
+}
+#drawer-reopen:hover { color: var(--ink); }
+#drawer-reopen[hidden] { display: none; }
+
+/* Three rows is enough to see what you typed; the textarea grows to 30vh and then scrolls. The
+   old 92px floor cost a fifth of a phone screen before a single character was typed. */
+#composer-text { min-height: 64px; }
+
+/* ── stop button (SPEC 51) ──────────────────────────────────────────── */
+/* Only present while a turn runs, and shaped as the opposite of send: this is the control you
+   reach for when you can SEE the turn going wrong, so it must never be mistaken for the one that
+   starts more work. */
+#composer-stop[hidden] { display: none; }
+#composer-stop {
+  padding: 9px 14px;
+  background: var(--bg-sunken);
+  color: var(--warn);
+  border: 1px solid var(--warn);
+  border-radius: var(--radius);
+  font-family: var(--sans);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+#composer-stop:hover { background: var(--warn); color: #ffffff; }
+#composer-stop:disabled { opacity: 0.5; cursor: default; }
+
+/* ── narrow screens (SPEC: "on all devices including the phone") ──────── */
+/* loom had no media query at all, so a 390px phone gave the rail 270px and the chat 52px, with the
+   send button 280px off the right edge. Measured 2026-08-06, not guessed. */
+
+/* The right column OVERLAYS below 900px; it does not vanish (SPEC 188).
+   It used to be `display: none` here, which was harmless while the column held tasks and files and
+   fatal now that it holds the open list, the session picker and the column foot: under 900px every
+   one of them would be gone, with the reopen handle gone too. So the column slides in over the
+   centre, exactly as the rail already does below 700px, and the handle is never hidden — it is the
+   only way in. This repairs the narrow layout; it does not redesign it (mobile stays deferred). */
+@media (max-width: 900px) {
+  #layout { --col-drawer: 0px; }
+  #drawer {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    right: 0;
+    width: min(86vw, 320px);
+    z-index: 40;
+    transform: translateX(100%);
+    transition: transform 140ms ease;
+    box-shadow: 0 0 24px rgb(0 0 0 / 18%);
+  }
+  #layout.drawer-open #drawer { display: flex; transform: none; }
+  /* The handle stays put whatever the collapse state says: the attribute is the desktop gesture's
+     memory, and down here there is no other door. */
+  #drawer-reopen,
+  #drawer-reopen[hidden] { display: block; }
+  #layout.drawer-open #drawer-reopen { right: min(86vw, 320px); }
+}
+
+@media (max-width: 700px) {
+  /* The rail slides over the chat instead of taking a column from it. `--col-side: 0` keeps the
+     grid's four explicit columns intact — the transcript must never fall into column 1. */
+  #layout { --col-side: 0px; }
+  #side {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(80vw, 300px);
+    z-index: 40;
+    transform: translateX(-100%);
+    transition: transform 140ms ease;
+    box-shadow: 0 0 24px rgb(0 0 0 / 18%);
+  }
+  #layout.rail-open #side { transform: none; }
+  #rail-toggle { display: inline-flex; }
+  /* The phone copy of the clearance — 56px, because the screen is 844px tall. Inside the scroller,
+     like the desktop rule: on a phone the reclaimed strip is a whole line of text. */
+  #transcript-body { padding: 14px 14px 56px; }
+  #composer { padding: 8px 10px 10px; }
+  /* The file takes the whole centre at every width now, so the phone rule that used to say so has
+     nothing left to say (SPEC 177/189). */
+}
+
+/* The rail toggle only exists on narrow screens; the media query above turns it on. It is fixed to
+   the window rather than absolute inside the transcript, because it left that column with the rest
+   of the chrome (SPEC 177) and the rail it opens is fixed too. */
+#rail-toggle {
+  display: none;
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 20;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--ink-dim);
+  font-size: 15px;
+  cursor: pointer;
+}
+#transcript { position: relative; }
+@media (max-width: 700px) {
+  /* The tab bar used to start after the toggle rather than under it. With the strip gone the toggle
+     floats over the content itself, so the content starts below it instead.
+     THREE panes now where the old rule touched only the strip, and that is deliberate: the rail
+     toggle floats over whichever pane the centre is showing, so every pane it can cover has to
+     start below it. A rule on one of them would put the toggle over the first line of the other
+     two. */
+  #transcript-body,
+  #record-body,
+  #file-body { padding-top: 44px; }
+}
+
+/* Last word: the base rule above hides the toggle, and later rules win at equal specificity. */
+@media (max-width: 700px) {
+  #rail-toggle { display: inline-flex; }
+}
+
+/* A queued message: yours, accepted, not answered yet. Dimmed so it reads as in-flight rather than
+   as part of the transcript, which it is not until the child gets to it. */
+.msg.pending { opacity: 0.62; border-left: 2px solid var(--line); padding-left: 12px; margin-left: -14px; }
+.msg.pending .when { font-style: italic; }
+
+/* One row per filter that took something away: what is missing, and the click that hands it back
+   (SPEC 81). Up to two show at once — recency stands down while a focus is in force. */
+.tree-more {
+  display: block;
+  width: calc(100% - 16px);
+  margin: 6px 8px;
+  padding: 4px 8px;
+  background: none;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  color: var(--ink-faint);
+  font-family: var(--sans);
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tree-more + .tree-more { margin-top: -2px; }
+.tree-more:hover { color: var(--ink-dim); border-color: var(--ink-faint); }
+/* The focus row carries the same gold as the crosshair that set it — one state, one colour. */
+.tree-more.focused { color: var(--gold); border-color: var(--gold); border-style: solid; opacity: 0.85; }
+.tree-more.focused:hover { color: var(--gold); opacity: 1; }
+/* Hand creation: the one create affordance with pixels of its own, and it creates a root. */
+.tree-more.create { border-style: none; }
+
+/* The row context menu (SPEC §Create-and-rename): writes above the separator, utilities below. */
+.tree-menu {
+  position: fixed;
+  z-index: 40;
+  min-width: 150px;
+  padding: 4px 0;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 16px rgb(30 36 58 / 14%);
+}
+.tree-menu button {
+  display: block;
+  width: 100%;
+  padding: 6px 14px;
+  background: none;
+  border: 0;
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.tree-menu button:hover { background: var(--bg-sunken); }
+.tree-menu .sep { height: 1px; margin: 4px 0; background: var(--line); }
+
+/* Inline title input — creation under a row, or a row mid-rename. */
+.tree-input { display: flex; padding: 2px 8px; }
+.tree-input input {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 6px;
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 12.5px;
+  outline: none;
+}
+
+/* The record tab's title is the second rename door. */
+.record-md h1.record-title { cursor: text; border-radius: 4px; }
+.record-md h1.record-title:hover { outline: 1px dashed var(--accent); outline-offset: 3px; }
+.record-title-input {
+  width: 100%;
+  margin: 0.67em 0;
+  padding: 2px 4px;
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 1.6em;
+  font-weight: 700;
+  outline: none;
+}
+
+/* The deploy notice. Loud on purpose — the failure it replaces is a page that looks fine and is a
+   version behind. It sits in the right column's foot now (SPEC 177), so it is a block in a narrow
+   column rather than a strip across the top of the reading column. */
+#update-bar {
+  flex: 0 0 auto;
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--warn);
+  border-radius: var(--radius);
+  background: #fdf6e6;
+  color: var(--warn);
+  font-family: var(--sans);
+  font-size: 12.5px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+#update-bar[hidden] { display: none; }
+#update-bar:hover { filter: brightness(0.97); }
+
+/* The bundle stamp: quiet, always there, and the first thing to read when the UI looks wrong. */
+.build { font-size: 10px; font-family: var(--mono); color: var(--ink-faint); opacity: 0.75; }
+
+/* ── the image viewer (SPEC §117/§118) ──────────────────────────────── */
+
+/* Every image big enough to be worth a look says so before it is clicked. */
+.zoomable { cursor: zoom-in; }
+
+#zoom {
+  position: fixed;
+  inset: 0;
+  /* Above the drawer and the off-canvas rail; below nothing but the login gate. */
+  z-index: 60;
+  background: rgba(13, 14, 20, 0.94);
+  overflow: hidden;
+  /* The browser must not claim the pinch or the drag — this is the whole touch half of §118. */
+  touch-action: none;
+  overscroll-behavior: contain;
+  cursor: zoom-in;
+}
+#zoom[hidden] { display: none; }
+#zoom.zoomed { cursor: grab; }
+#zoom.zoomed:active { cursor: grabbing; }
+#zoom-img {
+  position: absolute;
+  top: 0;
+  left: 0;
+  /* All movement is one transform off the top-left corner, which is what zoom-math.ts computes. */
+  transform-origin: 0 0;
+  user-select: none;
+  -webkit-user-drag: none;
+  /* A screenshot read at 4× should show its pixels, not a guess at what was between them. */
+  image-rendering: crisp-edges;
+}
+#zoom-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  /* 44px: a real touch target, per the phone layout's own floor. */
+  width: 44px;
+  height: 44px;
+  font-size: 26px;
+  line-height: 1;
+  color: #fff;
+  background: rgba(30, 32, 40, 0.8);
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  cursor: pointer;
+}
+#zoom-close:hover { filter: brightness(1.3); }
+
+/* ── the build plan block (SPEC 147–152) ──────────────────────────────────────
+   Sections render open; the arrow folds one already read. Nothing here has a fixed
+   height: a block grows to its content and never scrolls inside the message (149). */
+.rich-plan { margin: 0 0 0.75em; container-type: inline-size; }
+.plan { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden;
+  background: var(--bg); }
+.plan.awaiting { border-color: #ecd5a6; }
+.plan.open { border-color: #bcdcbd; }
+.plan-head { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap;
+  padding: 8px 10px 7px; border-bottom: 1px solid var(--line-soft); background: var(--bg-raised); }
+.plan-kind { flex: none; width: 100%; font-family: var(--mono); font-size: 9.5px;
+  text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-faint); margin: 0 0 1px; }
+/* …but never a FILENAME. The row's uppercase is for its label; it was shouting the plan's own file
+   name back as LOOM-PLAN-BLOCK-2026-08-10.MD (2026-08-11). */
+.plan-kind .chip { text-transform: none; letter-spacing: 0; }
+.plan-head h3 { font-size: 13.5px; margin: 0; font-weight: 600; flex: 1 1 auto; min-width: 0; }
+.plan-size { flex: none; font-family: var(--mono); font-size: 10px; border: 1px solid var(--line);
+  border-radius: 4px; padding: 0 5px; color: var(--ink-faint); }
+.plan-state { display: flex; gap: 6px; align-items: center; padding: 5px 10px; font-size: 11.5px;
+  border-bottom: 1px solid var(--line-soft); }
+.plan-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.plan.awaiting .plan-state { background: #fdf4e4; color: #8a6112; }
+.plan.awaiting .plan-dot { background: var(--gold); }
+.plan.open .plan-state { background: #eaf5ea; color: #256b29; }
+.plan.open .plan-dot { background: var(--user); box-shadow: 0 0 0 3px rgba(46, 125, 50, 0.18); }
+.plan-missing { padding: 5px 10px; border-bottom: 1px solid var(--line-soft); }
+
+.plan-fact { display: flex; gap: 8px; padding: 5px 10px; align-items: baseline;
+  border-bottom: 1px solid var(--line-soft); }
+.plan-k { flex: none; width: 62px; font-size: 10px; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--ink-faint); }
+.plan-v { flex: 1 1 auto; min-width: 0; color: var(--ink-dim); overflow-wrap: anywhere; }
+.plan-chips { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.plan-gap { font-size: 11.5px; color: var(--error); border: 1px dashed #e0a99e;
+  background: #fdf1ef; border-radius: 5px; padding: 0.5px 7px; display: inline-block; }
+
+.plan-work { border-bottom: 1px solid var(--line-soft); padding: 6px 10px 7px; }
+.plan-group + .plan-group { margin-top: 7px; border-top: 1px solid var(--line-soft);
+  padding-top: 6px; }
+.plan-group-h { margin: 0 0 3px; }
+.plan-task { display: flex; gap: 7px; align-items: baseline; padding: 2px 0; }
+.plan-box { flex: none; font-family: var(--mono); font-size: 12px; color: var(--ink-faint);
+  width: 13px; text-align: center; }
+.plan-task-n { flex: 1 1 auto; min-width: 0; }
+
+.plan-sec { border-bottom: 1px solid var(--line-soft); }
+.plan-h { display: flex; gap: 7px; align-items: baseline; padding: 6px 10px; cursor: pointer;
+  user-select: none; }
+.plan-h:hover { background: var(--bg-raised); }
+.plan-arrow { flex: none; width: 9px; font-size: 9px; color: var(--ink-faint); }
+.plan-t { flex: none; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--ink-faint); }
+.plan-c { flex: 1 1 auto; min-width: 0; font-size: 11px; color: var(--ink-faint); }
+.plan-b { padding: 0 10px 9px 26px; }
+.plan-sec.shut .plan-b { display: none; }
+
+.plan-item { margin: 0 0 8px; }
+.plan-item-h { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
+.plan-nm { font-weight: 600; }
+.plan-tag { flex: none; font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.05em;
+  border-radius: 4px; padding: 0 5px; border: 1px solid var(--line); color: var(--ink-faint); }
+.plan-tag.new { background: #eaf5ea; border-color: #bcdcbd; color: #256b29; }
+.plan-tag.new::before { content: "✦ "; }
+.plan-tag.changed { background: #fdf4e4; border-color: #ecd5a6; color: #8a6112; }
+.plan-tag.changed::before { content: "✎ "; }
+.plan-frow { display: flex; gap: 6px; align-items: baseline; padding: 1.5px 0; }
+.plan-flb { flex: none; width: 52px; font-size: 10px; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--ink-faint); }
+.plan-ftx { flex: 1 1 auto; min-width: 0; color: var(--ink-dim); }
+.plan-p { margin: 0.2em 0 0.4em; color: var(--ink-dim); }
+
+.plan-foot { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; padding: 6px 10px;
+  background: var(--bg-raised); font-size: 11.5px; color: var(--ink-dim); }
+.plan-src { margin-left: auto; flex: none; font-size: 11px; color: var(--ink-faint);
+  cursor: pointer; text-decoration: underline dotted; }
+.plan-raw { margin: 0; max-height: none; }
+.plan-unreadable { border-color: #e0a99e; }
+
+/* 150 · at his real COLUMN width the rows stack. A media query asks about the window, and a 300px
+   chat column inside a 1280px window never triggered it (the verifier, 2026-08-10). */
+@container (max-width: 380px) {
+  .plan-k, .plan-flb { width: auto; }
+  .plan-fact, .plan-frow { flex-wrap: wrap; }
+}
+.plan-table { border-collapse: collapse; width: 100%; margin: 4px 0 6px; font-size: 11.5px; }
+.plan-table th { text-align: left; font-size: 9.5px; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--ink-faint); padding: 2px 5px;
+  border-bottom: 1px solid var(--line); }
+.plan-table td { padding: 2px 5px; border-bottom: 1px solid var(--line-soft);
+  color: var(--ink-dim); vertical-align: top; }
+
+/* the plan block's typed rows — one shape per section, as the prototype drew them */
+.plan-kind { display: flex; gap: 6px; align-items: baseline; }
+.chip.plan-file { margin-left: auto; font-family: var(--sans); font-size: 10px; }
+.plan-task.done .plan-task-name { color: var(--ink-faint); text-decoration: line-through; }
+.plan-task-n { flex: none; font-family: var(--mono); font-size: 10.5px; color: var(--ink-faint); }
+.plan-task-name { flex: 1 1 auto; min-width: 0; }
+.plan-item.card { border: 1px solid var(--line-soft); border-radius: 5px; padding: 6px 8px;
+  margin: 0 0 7px; }
+.plan-place { color: var(--ink-faint); font-size: 11px; }
+.plan-ex { margin: 4px 0 0; }
+.plan-exh { font-size: 10.5px; color: var(--accent); cursor: pointer; user-select: none; }
+.plan-exb { margin: 3px 0 0; padding: 6px 8px; background: var(--bg-sunken); border-radius: 5px;
+  font-family: var(--mono); font-size: 11px; color: var(--ink-dim); }
+.plan-ex.shut .plan-exb { display: none; }
+.plan-log { display: flex; gap: 7px; align-items: baseline; padding: 3px 0; }
+.plan-log + .plan-log { border-top: 1px solid var(--line-soft); }
+.plan-log-t { flex: none; font-family: var(--mono); font-size: 10.5px; color: var(--ink-faint); }
+.plan-log-x { flex: 1 1 auto; min-width: 0; color: var(--ink-dim); }
+.plan-log-d { flex: none; font-family: var(--mono); font-size: 10.5px; }
+.plan-log-d.over { color: var(--error); }
+.plan-log-d.under { color: var(--user); }
+.plan-who { display: flex; gap: 7px; align-items: baseline; padding: 3px 0; }
+.plan-who + .plan-who { border-top: 1px solid var(--line-soft); }
+.plan-who-x { flex: 1 1 auto; min-width: 0; color: var(--ink-dim); }
+.plan-actor { flex: none; font-size: 11px; border-radius: 4px; padding: 0 6px;
+  border: 1px solid #d8c8f0; background: #f3eefc; color: #6b4ca8; }
+.plan-actor.you { border-color: #bcdcbd; background: #eaf5ea; color: #256b29; }
+.plan-q { padding: 4px 0; }
+.plan-q + .plan-q { border-top: 1px solid var(--line-soft); }
+.plan-ask { font-weight: 600; margin-right: 6px; }
+.plan-how { display: block; color: var(--ink-faint); font-size: 11.5px; margin-top: 2px; }
+/* the five states (SPEC 148) — stopped and dropped are the two the block could not show before */
+.plan.stopped { border-color: var(--line); }
+.plan.stopped .plan-state { background: var(--bg-sunken); color: var(--ink-dim); }
+.plan.stopped .plan-dot { background: var(--ink-faint); }
+.plan.closed { border-color: var(--line); }
+.plan.closed .plan-state { background: var(--bg-sunken); color: var(--ink-faint); }
+.plan.closed .plan-dot { background: var(--ink-faint); }
+.plan.closed .plan-head h3 { color: var(--ink-dim); }
+.plan.dropped { border-color: #e0a99e; }
+.plan.dropped .plan-state { background: #fdf1ef; color: var(--error); }
+.plan.dropped .plan-dot { background: var(--error); }
+.plan-when { margin-left: auto; font-size: 11px; color: var(--ink-faint); }
+.plan-problem { display: flex; gap: 6px; align-items: baseline; padding: 2px 0 0; }
+.plan-problem .plan-ftx { color: var(--error); }
+.plan-prev { display: flex; gap: 7px; align-items: baseline; padding: 3px 0; }
+.plan-prev + .plan-prev { border-top: 1px solid var(--line-soft); }
+.plan-prev-id { flex: none; font-family: var(--mono); font-size: 10.5px; color: var(--ink-faint); }
+.plan-prev-state { margin-left: auto; flex: none; font-size: 10.5px; color: var(--ink-faint); }
+.plan-prev-state.closed { color: var(--user); }
+.plan-prev-state.dropped { color: var(--error); }
+
+/* The ordinal a long item list needs to be referenceable at all (2026-08-11). */
+.plan-ord {
+  flex: 0 0 auto;
+  min-width: 1.4em;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+/* Requirement 150, for real this time: below 380px the schema table STACKS — each row a block, each
+   cell carrying its column's name — instead of overflowing a `.plan { overflow: hidden }` box and
+   being silently clipped, which is worse than the scrollbar the requirement forbids (verifier,
+   2026-08-11: table 248px wide in a 216px card, 24px cut off with no way to reach it). */
+@container (max-width: 380px) {
+  .plan-table, .plan-table tbody, .plan-table tr, .plan-table td { display: block; width: auto; }
+  .plan-table tr:first-child { display: none; }
+  .plan-table tr { border-top: 1px solid var(--line-soft); padding: 4px 0; }
+  .plan-table td { padding: 1px 0; overflow-wrap: anywhere; }
+  /* One-letter columns stay on ONE line: stacking them turned a 17-row table into 85 rows. */
+  .plan-table td[data-col="S"], .plan-table td[data-col="M"], .plan-table td[data-col="L"] {
+    display: inline-block;
+    margin-right: 12px;
+  }
+  .plan-table td[data-col]::before {
+    content: attr(data-col) " · ";
+    color: var(--ink-faint);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+}
+
+/* ── his 2026-08-11 list, against the v9 prototype ─────────────────────────── */
+
+/* 3 · a failure scenario is red at its name, as `.sc.err .nm` drew it. */
+.plan-item.err > .plan-item-h .plan-nm { color: var(--error); }
+.plan-item.err > .plan-item-h .plan-ord { color: var(--error); }
+
+/* 4 · quality and deployment share ONE row shape: number, actor, text. */
+.plan-q { display: flex; gap: 7px; align-items: baseline; padding: 3px 0; }
+.plan-q + .plan-q { border-top: 1px solid var(--line-soft); }
+.plan-q .plan-q-x { flex: 1 1 auto; min-width: 0; }
+.plan-q .plan-how { color: var(--ink-dim); }
+.plan-who .plan-ord, .plan-q .plan-ord { flex: 0 0 auto; min-width: 1.2em; }
+
+/* 5 · a role is not a person — the prototype's `.chip.role`, purple with a diamond. */
+.plan-role {
+  flex: none;
+  font-size: 11px;
+  border-radius: 4px;
+  padding: 0 6px;
+  background: #f3eefc;
+  border: 1px solid #d8c8f0;
+  color: #6b4ca8;
+}
+.plan-role::before { content: "◆ "; font-size: 0.75em; opacity: 0.7; }
+
+/* 2 · the state model, drawn as transitions with pills instead of prose. */
+.plan-trans { display: flex; gap: 7px; align-items: baseline; padding: 3px 0; }
+.plan-trans + .plan-trans { border-top: 1px solid var(--line-soft); }
+.plan-trans-p { flex: none; display: inline-flex; gap: 4px; align-items: baseline; }
+.plan-trans-x { flex: 1 1 auto; min-width: 0; color: var(--ink-dim); }
+.plan-arrow-to { color: var(--ink-faint); }
+.plan-st { border-radius: 4px; padding: 0 5px; border: 1px solid var(--line); font-size: 11px; }
+.plan-st.awaiting { background: #fdf4e4; border-color: #ecd5a6; color: #8a6112; }
+.plan-st.open { background: #eaf5ea; border-color: #bcdcbd; color: #256b29; }
+.plan-st.stopped { background: var(--bg-sunken); color: var(--ink-dim); }
+.plan-st.closed { background: var(--bg-sunken); color: var(--ink-faint); }
+.plan-st.dropped { background: #fdf1ef; border-color: #e0a99e; color: var(--error); }
+
+/* 8 · the log's third column, named once at the top instead of guessed at. */
+.plan-legend { font-size: 10px; color: var(--ink-faint); text-transform: uppercase;
+  letter-spacing: 0.05em; padding: 2px 0 4px; }
+
+/* 11 · a section title he can find at a glance. It was 10px faint uppercase, the same weight as
+   every label in the document, so scanning for one meant reading all of them. */
+.plan-sec > .plan-h {
+  background: var(--bg-sunken);
+  border-top: 1px solid var(--line);
+}
+.plan-sec > .plan-h .plan-t {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--ink);
+}
+.plan-sec > .plan-h:hover .plan-t { color: var(--accent); }
+
+/* A task a link just arrived at — one flash, then it is an ordinary row again. */
+.task.flash { animation: task-flash 1.6s ease-out; }
+@keyframes task-flash {
+  0%, 40% { background: #fff6d8; box-shadow: inset 3px 0 0 var(--gold); }
+  100% { background: transparent; box-shadow: none; }
+}
+
+/* ── embedded documents: a picture inside a block (SPEC 165–168) ───────────── */
+.embed { max-width: 100%; }
+.embed iframe { display: block; width: 100%; border: 1px solid var(--line);
+  border-radius: var(--radius); background: #fff; }
+/* The way out of the frame (SPEC 205). Under it, not over it, and visible at rest — a hover control
+   does not exist on the phone this is most often read on. */
+.embed-open { display: block; text-align: right; font-size: 11px; color: var(--ink-faint);
+  text-decoration: none; padding: 3px 2px 0; }
+.embed-open:hover { color: var(--accent); }
+/* No width: an image draws at its own size and is capped by the column — never enlarged past it. */
+.embed-img { display: block; max-width: 100%; height: auto; border: 1px solid var(--line);
+  border-radius: 5px; background: #fff; cursor: zoom-in; }
+.embed-err { font-size: 11.5px; color: var(--error); border: 1px dashed #e0a99e;
+  background: #fdf1ef; border-radius: 5px; padding: 4px 7px; overflow-wrap: anywhere; }
+.plan-pic { margin: 6px 0 2px; }
+.plan-cap { font-size: 11px; color: var(--ink-faint); padding: 3px 1px 0; }
+
+/* ── fullscreen: f gives the centre the whole window (SPEC 194) ──────────────
+   Both side columns leave at once and the content column becomes the window. His ask: *"pressing f
+   to toggle fullscreen in loom meaning removing the left and right panel and allowing the middle
+   content to span the whole window width. And also when pressed again - the panels return."*
+
+   The handles leave with the columns. `#drawer-reopen` and `#rail-toggle` each offer to bring a
+   panel back, and while a mode has taken both panels away that offer is a lie — `f` is the way
+   back, and the toast on the way in says so.
+
+   ⚠ Written at the FOOT of the file on purpose, not beside the `drawer-collapsed` rules it belongs
+   with. Below 900px the same two columns come back as overlays (`#layout.rail-open #side`,
+   `#layout.drawer-open #drawer`), and those selectors have exactly this specificity — id + class,
+   id — so nothing but source order decides between them. Last wins, and fullscreen has to. */
+#layout.fullscreen { --col-side: 0px; --col-drawer: 0px; }
+#layout.fullscreen #side,
+#layout.fullscreen #drawer,
+#layout.fullscreen #drawer-reopen,
+#layout.fullscreen #rail-toggle { display: none; }
+
+/* ── the previous session, carried across the seam (SPEC §Recap) ──────────────────────────────
+   Not a message: nothing was said and nothing was answered, so it wears none of `.msg`'s shape.
+   Gold because loom already spends gold on what he chose, and this is the one block he can refuse. */
+.recap {
+  border-left: 2px solid var(--gold);
+  padding-left: 14px;
+  margin: 0 0 26px;
+  /* No cap (SPEC 183/193): this block is content in the centre column, and the column has no
+     measure any more. It arrived carrying 78ch from the line it was written on. */
+}
+.recap-head { display: flex; align-items: baseline; gap: 9px; margin-bottom: 6px; flex-wrap: wrap; }
+.recap-head .who { color: var(--gold); }
+.recap-head .when { font-size: 11px; color: var(--ink-faint); font-family: var(--mono); }
+.recap-lbl {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-faint);
+  font-weight: 700;
+  margin: 12px 0 2px;
+}
+.recap > p, .recap > ol, .recap > ul { margin: 0 0 0.5em; }
+.recap-x {
+  margin-left: auto;
+  background: none;
+  border: 0;
+  color: var(--ink-faint);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0 3px;
+}
+.recap-x:hover { color: var(--error); }
+.recap-rest { margin-top: 11px; padding-top: 9px; border-top: 1px dashed var(--line); }
+/* Where this copy came from, when it is not the delivered one (SPEC 180). Beside the link, quiet:
+   it explains the block's provenance, it is not a second thing to do. */
+.recap-from { font-size: 11px; color: var(--ink-faint); font-family: var(--mono); margin-left: 8px; }
+.recap-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12.5px;
+  border-bottom: 1px dotted;
+}
+/* Working and failed are the same block in a quieter colour — a state that neither arrives nor
+   fails is the one thing the screen must never show. */
+.recap.working, .recap.failed { border-left-color: var(--line); }
+.recap.working .recap-head .who, .recap.failed .recap-head .who { color: var(--ink-faint); }
+
+/* The core selector sits where the panel's title was, and must READ as that title until touched —
+   a form control bolted onto a rail looks like a form, and this is a heading that happens to
+   choose (User approved the shape 2026-08-16). */
+.core-select {
+  flex: 1; min-width: 0; font: inherit; font-weight: 600; color: var(--ink);
+  background: transparent; border: 1px solid transparent; border-radius: 6px;
+  padding: 1px 5px; cursor: pointer; appearance: none;
+}
+.core-select:hover, .core-select:focus { border-color: var(--line); background: var(--bg); outline: none; }
+.core-count { font-size: 10px; color: var(--ink-faint); flex: none; padding-right: 6px; }
+
+/* Each message is its own layout box, so a forced layout from the composer stops at its edge
+   instead of walking every turn above it (item 51). Measured cause: the composer's input handler
+   spent 929ms of 945 in forced synchronous layout in his browser. `style` is included because a
+   counter or font change inside a message must not escape it either. */
+.msg { contain: layout style; }
+
+/* The browser sizes the box; no JS measures it. `field-sizing` removes the last forced synchronous
+   layout from typing (item 51) — the JS fallback in `fitComposer` still clamps at the same 40% of
+   the window for anything that does not support it. */
+#composer-text { field-sizing: content; max-height: 40vh; }

@@ -1,0 +1,29 @@
+name: Tests
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  loom-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v1
+      - run: bun install
+      - run: bun x tsc --noEmit
+      - run: bun test tests/props
+
+  # loom-pins stays in the VAULT's CI: the journey fixture is generated from a real
+  # transcript (make-fixture.ts), which the public mirror deliberately does not ship.
+  loom-pins-disabled:
+    if: false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v1
+      - run: bun install
+      - run: npx -y playwright install --with-deps
+      - run: env LOOM_PIN_WORKERS=1 bun run pins

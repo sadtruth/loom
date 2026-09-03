@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>loom</title>
+    <meta name="theme-color" content="#ffffff" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="./icon-192.png" />
+    <!-- Inline so there is no /favicon.ico route to serve — and no 404, which the journey pin counts
+         as a page error. -->
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><rect width=%2216%22 height=%2216%22 rx=%223%22 fill=%22%23fff%22 stroke=%22%23999%22/><g stroke=%22%23b8863b%22 stroke-width=%221.2%22><path d=%22M3 2v12M8 2v12M13 2v12%22/><path d=%22M1 6h14M1 10h14%22 stroke=%22%233b6ecc%22/></g></svg>"
+    />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main id="layout">
+      <!-- Only visible under 700px, where the rail is off-canvas and this is the only way back to
+           the tree (SPEC 188). It hangs off the layout rather than off the transcript: the centre
+           column carries content and nothing else (SPEC 177). -->
+      <button id="rail-toggle" type="button" aria-label="Projects" title="Projects">☰</button>
+      <aside id="side" class="pane">
+        <div class="pane-head">
+          <span class="pane-title">loom</span>
+          <span id="status" class="status">idle</span>
+          <!-- The loaded bundle's content hash. Costs one span and ends the entire class of
+               "is the browser showing what the server is serving?" (2026-08-06, three rounds). -->
+          <span id="build" class="build" title="the bundle this page is running"></span>
+        </div>
+        <!-- the rail carries the tree and nothing else (SPEC 59–61, 187): the view toggles sit at
+             the foot of the right column, and the session list became the select under the chat row. -->
+        <div class="pane-head">
+          <select id="core-select" class="core-select" title="which core's projects"></select>
+          <span id="core-count" class="core-count"></span>
+        </div>
+        <!-- The Active list (SPEC 247): the same 24h window the tree's ring already uses, read flat
+             and newest first, scoped to the core the selector above is showing. Both halves start
+             hidden — nothing active means nothing drawn, not a row saying so. -->
+        <div id="active-head" class="pane-head active-head" hidden>
+          <span class="pane-title">Active</span>
+        </div>
+        <div id="active-body" class="pane-body active-body" hidden></div>
+        <div id="tree-body" class="pane-body"></div>
+      </aside>
+
+      <section id="transcript" class="pane">
+        <div id="record-body" class="pane-body" hidden></div>
+        <!-- A positioning context for everything that floats over the chat: the docked composer,
+             the `write` pill and the permission badge (SPEC 199, 184). -->
+        <div id="chat-area">
+          <div id="transcript-body" class="pane-body"></div>
+          <!-- The way back to anything that can scroll away (SPEC 184). Both appear ONLY while the
+               thing they point at is off screen, and the badge never answers anything itself: a
+               permission granted from a badge is one granted without reading it. -->
+          <button id="permit-badge" type="button" hidden></button>
+          <button id="write-pill" type="button" hidden>write</button>
+          <!-- The marker gutter (SPEC 192), experimental. Outside the scroller on purpose: it floats
+               over the chat's right edge and takes no part in the transcript's layout, so nothing
+               here can move the text or change the scroller's height. -->
+          <div id="gutter" aria-hidden="true"></div>
+          <!-- These two are children of the SCROLLER, not of the pane (SPEC 199): `drawTranscript`
+               appends them at the end of the message flow every redraw, the way it already does with
+               the working row. They sit here in the markup so the page has them before the first
+               draw. The composer is the last element of the chat and scrolls away with the text; the
+               spacer holds its place in the flow while it is docked (SPEC 182).
+               The permission cards are NOT here. They render in message order, at the point of the
+               turn where each was asked (SPEC 185), so `drawTranscript` builds them into the flow
+               rather than appending one container at the tail — one container at the end puts a card
+               asked mid-turn below every turn that came after it. -->
+          <div id="subagents-container"></div>
+          <div id="composer-anchor"></div>
+          <!-- Two rows, VS Code's shape: the text you are writing, then a toolbar under it. One row
+               put seven controls beside the textarea, so on a phone the send button sat 280px off the
+               right edge of the screen (measured 2026-08-06). -->
+          <form id="composer">
+            <!-- Inside the docking element, not above it (SPEC 199): a thumbnail strip left behind
+                 while its composer docks is a draft with no way back to it. -->
+            <div id="attachments" hidden></div>
+          <textarea
+            id="composer-text"
+            rows="3"
+            aria-label="Message this session"
+          ></textarea>
+          <div id="composer-bar">
+            <button id="composer-attach" type="button" title="Attach an image">📎</button>
+            <div class="model-pick-group">
+              <select id="pick-model" class="composer-pick" aria-label="Model" title="Which model answers this turn. default = whatever the CLI would pick on its own."></select>
+              <span class="session-model-mark" title="This model belongs to this session">this session</span>
+            </div>
+            <select id="pick-effort" class="composer-pick" aria-label="Thinking level" title="How hard it thinks before acting. default = the CLI's own level.">
+              <option value="default">think: default</option>
+              <option value="low">low</option>
+              <option value="medium">medium</option>
+              <option value="high">high</option>
+              <option value="xhigh">xhigh</option>
+              <option value="max">max</option>
+            </select>
+            <label id="composer-mode" title="checked: every file write and command shows you an Allow/Deny card first · unchecked: the auto classifier decides silently, like your normal sessions">
+              <input id="mode-cards" type="checkbox" />
+              <span>ask first</span>
+            </label>
+            <label id="composer-browser" title="checked: this session's child loads the Playwright MCP browsers · unchecked (default): it ignores .mcp.json entirely. The servers connecting and dropping changes the tool list, which invalidates the prompt cache and re-sends the whole conversation as a write — one flap cost 141,405 tokens on 2026-08-07.">
+              <input id="use-browser" type="checkbox" />
+              <span>browser</span>
+            </label>
+            <!-- What typing here costs, and the way to stop paying it (SPEC §Train): the button
+                 opens a seam and starts a fresh session in the same train. The MARK that reports the
+                 accounting left for the column's foot with the block meter (SPEC 186). -->
+            <button id="composer-new" type="button" title="Start a new session in this project — it joins the same train, one seam below" hidden>start a new one</button>
+            <button id="composer-stop" type="button" title="Stop this turn — anything queued behind it still runs" hidden>stop</button>
+            <button id="composer-send" type="submit" title="Send">send</button>
+          </div>
+          <input id="attach-input" type="file" accept="image/*" multiple hidden />
+          </form>
+        </div>
+      </section>
+
+      <!-- A file opens in the CENTRE, at full width (SPEC 189): a file is content, and the open
+           list keeps the chat one click away. Its name, path and actions are the first thing inside
+           the scroller rather than a permanent head above it — nothing in this column is permanent
+           any more. `showFile` re-appends this head above whatever it renders. -->
+      <section id="file" class="pane">
+        <div id="file-body" class="pane-body">
+          <div id="file-head">
+            <span id="file-title">file</span>
+            <button id="file-open" class="mini" title="Open in Obsidian / reveal in the file manager">↗</button>
+            <button id="file-close" class="icon" title="Close (Esc)">×</button>
+            <div class="file-path" id="file-path"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Two surfaces, one always-on column. User, 2026-08-06: the work items belong here and
+           "the file list is rarely what he wants while working" — so the picks are the pane's
+           title, and the default follows the centre (SPEC 75–78). -->
+      <aside id="drawer" class="pane">
+        <!-- The open list (SPEC 179, 196-197): the chat and at most ONE other thing, the session
+             picker riding INSIDE the chat row rather than under it. It was three lines - a title
+             with a count, the chat, the picker - and User: "the 3 lines on the screenshot could
+             be 1 line i think without losing anything". A count over a list that holds one thing
+             counts nothing, and the word "chat" beside a session picker names what the picker
+             already names. -->
+        <div id="opens" role="tablist"></div>
+        <div class="pane-head">
+          <button id="drawer-tasks" class="drawer-pick" type="button" title="This project's work items — tickable without leaving the session">tasks</button>
+          <button id="drawer-protos" class="drawer-pick" type="button" title="This project's prototypes — a row jumps to where it entered the conversation">prototypes</button>
+          <button id="drawer-files" class="drawer-pick" type="button" title="Files this session read and wrote">files</button>
+          <span id="drawer-count" class="count">0</span>
+          <button id="drawer-collapse" class="icon" title="Collapse">›</button>
+        </div>
+        <div id="drawer-body" class="pane-body"></div>
+        <!-- The foot of the right column. The update bar lives here now (SPEC 177) — it used to
+             hang over the top of the transcript, which is a place the centre no longer has. The
+             usage badge joins it at 186 (usage-bar, 2026-08-26 — replaces the old two-badge foot
+             and the three view toggles that used to share this row with it). -->
+        <div id="drawer-foot">
+          <!-- The one usage badge (SPEC 186, rewritten by the usage-bar build): a
+               severity-coloured dot, the 5-hour window percent, the prompt-cache countdown and the
+               time to reset, one 11px mono line. It replaces `#bar-meter` (the old fitted-estimate
+               block meter) and `#cache-state` — the two used to draw separately, and the block
+               meter was reporting a number nobody measured. Everything else — the weekly window,
+               this session's share, context size, last-turn reuse — is in its `title` tooltip,
+               built alongside the row by `drawBadge()` in app.ts. The composer scrolls (SPEC 199),
+               so a meter that scrolled away with it was not doing its job; that is still why this
+               sits at the foot and not in the composer row. -->
+          <div id="bar-meter" class="meter" role="region" aria-label="Usage budgets and pool meters" aria-live="polite" hidden>
+            <div class="r">
+              <span id="bar-dot" class="dot"></span>
+              <span id="bar-pct" class="p"></span>
+              <span id="bar-sep0" class="sep">·</span>
+              <!-- How big the session is, in the line rather than in the tooltip (2026-08-29:
+                   "I also want to see how big the session is, in the line, like 147k"). -->
+              <span id="bar-ctx" class="ctx"></span>
+              <span id="bar-sep" class="sep">·</span>
+              <span id="bar-cache" class="cache"></span>
+              <span id="bar-reset" class="t"></span>
+              <!-- 4-Pool Micro-meters strip -->
+              <div id="micro-strip" class="micro-strip" title="All 4 pool budgets — click to toggle breakdown" hidden>
+                <div class="micro-bar" id="mb-claude" title="Claude (Anthropic)"><i style="height: 0%"></i></div>
+                <div class="micro-bar" id="mb-g1-gem" title="G1 gemini"><i style="height: 0%"></i></div>
+                <div class="micro-bar" id="mb-g1-cla" title="G1 claude"><i style="height: 0%"></i></div>
+                <div class="micro-bar jules" id="mb-jules" title="Jules tasks"><i style="height: 0%"></i></div>
+              </div>
+            </div>
+            <!-- Our own tooltip, not the browser's `title`: a native tooltip waits about a second
+                 before it appears, which is the whole delay between wanting the weekly figure and
+                 getting it (2026-08-29). This one shows on hover with no delay. -->
+            <div id="bar-tip" class="bar-tip" hidden></div>
+          </div>
+          <!-- The three view toggles (doc/think/meta) that used to sit here are gone (usage-bar,
+               2026-08-26 — he asked for the row back and said his current view must not change when
+               they go). Whatever `loom-view` already holds on this device keeps driving the render;
+               only the buttons that changed it are removed. -->
+          <!-- Shown only when the server has restarted under an open page: the bundle on screen is
+               not the one being served, and a plain reload may not say so. -->
+          <button id="update-bar" type="button" hidden>loom was updated — click to reload</button>
+        </div>
+      </aside>
+      <!-- The way back: collapsing must never be a one-way door (ui record, item 1). -->
+      <button id="drawer-reopen" title="Show artifacts" hidden>‹</button>
+    </main>
+
+    <div id="toast" role="status" aria-live="polite"></div>
+    <!-- Shown only on a 401: the shell is served without auth, the data is not (SPEC invariant 7). -->
+    <form id="login" hidden>
+      <div class="login-box">
+        <div class="login-title">loom</div>
+        <div class="login-hint">this device is not authorised — paste the token from the server log</div>
+        <input id="login-token" type="password" placeholder="token" aria-label="Device token" />
+        <button type="submit">authorise this device</button>
+      </div>
+    </form>
+    <script type="module" src="./app.ts"></script>
+  </body>
+</html>
