@@ -19,6 +19,7 @@
  * wake it, because the redraw may never call it again.
  */
 
+import { saveSnapshot, loadSnapshot } from "./snapshot.ts";
 import {
   el,
   collectResults,
@@ -3744,6 +3745,8 @@ async function togglePin(uuid: string, pinned: boolean): Promise<void> {
 // `full` on every attach, so recovery is just re-attaching. Backoff doubles to a ceiling;
 // wake/online events short-circuit the wait.
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let snapshotSaveTimer: ReturnType<typeof setTimeout> | null = null;
+let paintedFromSnapshot = false;
 let reconnectDelay = 1_000;
 const RECONNECT_MAX = 15_000;
 
@@ -3830,7 +3833,25 @@ function sameMessages(a: readonly Message[], b: readonly Message[]): boolean {
   const lastB = b[b.length - 1];
   return lastA?.uuid === lastB?.uuid && lastA?.ts === lastB?.ts;
 }
+
+async function paintFromSnapshot(key: string, socket: WebSocket): Promise<void> {
+  const snap = await loadSnapshot(key);
+  if (!snap) return;
+  if (state.socket !== socket || state.messages.length > 0) return;
+
+  state.cwd = snap.cwd;
+  state.messages = snap.messages;
+  state.artifacts = snap.artifacts;
+  state.pins = snap.pins;
+  rememberAnchors(pendingKey(), snap.accepts ?? []);
+  drawAll();
+  scrollToEnd();
+  setStatus("restoring…");
+  paintedFromSnapshot = true;
+}
+
 function connect(rejoin = false): void {
+  let lastAccepts: PendingEcho[] | undefined;
   if (reconnectTimer !== null) { clearTimeout(reconnectTimer); reconnectTimer = null; }
   // ALREADY ON IT. Boot opens the socket from the address before the rail is loaded (SPEC 227), and
   // `applyLocation` then asks for the same session again a few hundred milliseconds later. Without
@@ -3876,6 +3897,10 @@ function connect(rejoin = false): void {
 
   const socket = new WebSocket(wanted);
   state.socket = socket;
+  if (!rejoin) {
+    const key = `${sessionStoreKey()}/${state.sessionId}`;
+    void paintFromSnapshot(key, socket);
+  }
   setStatus("connecting…");
 
   socket.addEventListener("message", (event) => {
@@ -3931,7 +3956,7 @@ function connect(rejoin = false): void {
     if (frame.type === "full") {
       reconnectDelay = 1_000; // attached and served — the link is good again
       const unchanged =
-        rejoin &&
+        (rejoin || paintedFromSnapshot) &&
         state.cwd === frame.meta.cwd &&
         sameMessages(state.messages, frame.messages) &&
         state.artifacts.length === frame.artifacts.length;
@@ -3943,6 +3968,7 @@ function connect(rejoin = false): void {
       state.subagents.clear();
       // The session's whole send history, accept times included — a reload or a second device places
       // every message exactly where the first one did (SPEC 145).
+      lastAccepts = frame.accepts;
       rememberAnchors(pendingKey(), frame.accepts ?? []);
       setStatus(`${frame.messages.length} msg · live`, "live");
       // Here, and not in `loadSessions`: the record's directory is not known until this frame — the
@@ -3950,6 +3976,7 @@ function connect(rejoin = false): void {
       // the spec, 2026-08-13). A reconnect asks again, which is harmless: it is guarded on having
       // no block, so a frame that arrived first always wins.
       void restoreRecap(state.sessionId);
+      paintedFromSnapshot = false;
 
       if (unchanged) {
         // Reconnected after backgrounding/sleep, but messages are identical: skip tearing down DOM
@@ -3964,6 +3991,19 @@ function connect(rejoin = false): void {
       setStatus(`${state.messages.length} msg · live`, "live");
     }
     drawAll();
+    if (fresh || frame.type === "append") {
+      if (snapshotSaveTimer !== null) clearTimeout(snapshotSaveTimer);
+      const key = `${sessionStoreKey()}/${state.sessionId}`;
+      const snap = {
+        at: Date.now(),
+        cwd: state.cwd,
+        messages: state.messages,
+        artifacts: state.artifacts,
+        pins: state.pins,
+        accepts: lastAccepts
+      };
+      snapshotSaveTimer = setTimeout(() => { void saveSnapshot(key, snap); }, 1000);
+    }
     // The destination is on screen: everything that was told to wait for it may go now.
     payOwed();
     // Rendered IS read, for the session actually on screen (SPEC 64).
