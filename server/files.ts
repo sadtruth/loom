@@ -42,6 +42,7 @@ const DENY_NAME = /^(\.env(\..*)?|id_(rsa|ed25519|ecdsa)(\.pub)?|.*\.(pem|key|p1
 
 /** 2 MB. A transcript pane is for reading, and anything larger is a download, not a read. */
 export const MAX_BYTES = 2 * 1024 * 1024;
+export const MAX_READ_BYTES = 10 * 1024 * 1024;
 
 export type Decision =
   | { ok: true; path: string }
@@ -357,9 +358,9 @@ export async function locate(
 
 const TEXT_EXT =
   /\.(md|markdown|txt|ts|tsx|js|jsx|mjs|cjs|json|jsonl|ya?ml|toml|ini|conf|sh|bash|zsh|fish|py|rb|go|rs|ex|exs|eex|heex|erl|c|h|cpp|hpp|java|kt|swift|sql|css|scss|html?|xml|svg|csv|tsv|log|nix|lua|gd|vim|el|dockerfile|gitignore|env\.example)$/i;
-const IMAGE_EXT = /\.(png|jpe?g|gif|webp|avif|svg)$/i;
+const IMAGE_EXT = /\.(png|jpe?g|gif|webp|avif|svg|bmp|ico|heic|heif|tif|tiff)$/i;
 
-export type Kind = "markdown" | "text" | "image" | "page";
+export type Kind = "markdown" | "text" | "image" | "page" | "pdf" | "download";
 
 /** One directory entry, as the pane draws it. Denied locations never appear (SPEC 141). */
 export interface DirEntry {
@@ -393,7 +394,8 @@ export async function listDir(path: string): Promise<DirEntry[]> {
 }
 
 /** How the pane should render it. Extensionless files are read as text and sniffed for NUL bytes. */
-export function kindOf(path: string): Kind | null {
+export function kindOf(path: string): Kind {
+  if (/\.pdf$/i.test(path)) return "pdf";
   if (IMAGE_EXT.test(path) && !/\.svg$/i.test(path)) return "image";
   if (/\.(md|markdown)$/i.test(path)) return "markdown";
   // BEFORE `TEXT_EXT`, which also claims `html?` — and claiming it is how every prototype link ever
@@ -401,7 +403,7 @@ export function kindOf(path: string): Kind | null {
   if (/\.html?$/i.test(path)) return "page";
   if (TEXT_EXT.test(path)) return "text";
   if (!/\.[A-Za-z0-9]{1,8}$/.test(path)) return "text"; // README, Makefile, LICENSE…
-  return null;
+  return "download";
 }
 
 /** Binary sniff for the extensionless case: a NUL in the first KB means "not for the pane". */
@@ -409,4 +411,27 @@ export function looksBinary(bytes: Uint8Array): boolean {
   const limit = Math.min(bytes.length, 1024);
   for (let i = 0; i < limit; i += 1) if (bytes[i] === 0) return true;
   return false;
+}
+
+/**
+ * Truncates a byte array at a given max length, taking care not to split a UTF-8 character.
+ */
+export function truncateUtf8(bytes: Uint8Array, max: number): Uint8Array {
+  if (bytes.length <= max) return bytes;
+  let i = max - 1;
+  while (i >= 0 && (bytes[i]! & 0xC0) === 0x80) {
+    i -= 1;
+  }
+  if (i < 0) return bytes.slice(0, 0);
+
+  let seqLen = 1;
+  const b = bytes[i]!;
+  if ((b & 0xE0) === 0xC0) seqLen = 2;
+  else if ((b & 0xF0) === 0xE0) seqLen = 3;
+  else if ((b & 0xF8) === 0xF0) seqLen = 4;
+
+  if (max - i < seqLen) {
+    return bytes.slice(0, i);
+  }
+  return bytes.slice(0, max);
 }
