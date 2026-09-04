@@ -20,7 +20,8 @@ import { aggregate, type Message, type Touch } from "./transcript.ts";
 import { readPins, setPin, type PinMap } from "./pins.ts";
 import { addAccept, readAccepts, type Accept } from "./accepts.ts";
 import { openPath } from "./open.ts";
-import { MAX_BYTES, guardFrom, kindOf, listDir, locate, looksBinary, resolveWiki, wikiScope } from "./files.ts";
+import { MAX_BYTES, guardFrom, kindOf, listDir, locate, looksBinary, resolveWiki, wikiScope, writable, readable } from "./files.ts";
+import { createHash } from "node:crypto";
 import { stat } from "node:fs/promises";
 import { readFileSync, type Stats } from "node:fs";
 import { PermitBroker, type Permit, type Verdict } from "./permits.ts";
@@ -1303,7 +1304,8 @@ const server = Bun.serve<SocketData, Routes>({
     // points here); everything readable comes back as JSON for the file pane. Every path goes
     // through the guard first — see server/files.ts for why an unbounded reader is not acceptable
     // on this port.
-    "/api/file": async (req) => {
+    "/api/file": {
+      GET: async (req) => {
       const denied = requireAuth(req);
       if (denied !== null) return denied;
       const params = new URL(req.url).searchParams;
@@ -1367,7 +1369,41 @@ const server = Bun.serve<SocketData, Routes>({
           },
         });
       }
-      return json({ path: verdict.path, kind, bytes: file.size, text: new TextDecoder().decode(bytes) });
+
+      const canWrite = writable(GUARD, raw).ok;
+      const sha = createHash("sha256").update(bytes).digest("hex");
+      return json({ path: verdict.path, kind, bytes: file.size, text: new TextDecoder().decode(bytes), sha, writable: canWrite });
+      },
+
+      PUT: async (req) => {
+        const denied = requireAuth(req);
+        if (denied !== null) return denied;
+
+        const body = (await req.json()) as { path?: unknown; text?: unknown; sha?: unknown };
+        if (typeof body.path !== "string" || body.path.length === 0) return json({ error: "path required" }, 400);
+        if (typeof body.text !== "string") return json({ error: "text required" }, 400);
+        if (typeof body.sha !== "string") return json({ error: "sha required" }, 400);
+        if (body.text.length > 5 * 1024 * 1024) return json({ error: "too large" }, 413);
+
+        const canWrite = writable(GUARD, body.path);
+        if (!canWrite.ok) return json({ error: canWrite.reason }, canWrite.status);
+
+        // Must already exist to be writable.
+        const readRes = await readable(GUARD, body.path);
+        if (!readRes.ok) return json({ error: readRes.reason }, readRes.status);
+
+        const file = Bun.file(readRes.path);
+        if (!(await file.exists())) return json({ error: "not found" }, 404);
+
+        const currentBytes = new Uint8Array(await file.arrayBuffer());
+        const currentSha = createHash("sha256").update(currentBytes).digest("hex");
+        if (currentSha !== body.sha) {
+          return new Response(new TextDecoder().decode(currentBytes), { status: 409 });
+        }
+
+        await writeAtomic(readRes.path, body.text);
+        return json({ ok: true });
+      }
     },
 
         "/api/models": {

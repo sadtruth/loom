@@ -22,6 +22,8 @@ interface FileResponse {
   kind: "markdown" | "text" | "dir" | "page";
   bytes: number;
   text: string;
+  sha?: string;
+  writable?: boolean;
   /** Present for `kind: "dir"` — one row per entry, directories first (SPEC 141). */
   entries?: Array<{ name: string; dir: boolean; bytes: number }>;
 }
@@ -33,7 +35,29 @@ export interface PaneHandles {
   title: HTMLElement;
   path: HTMLElement;
   body: HTMLElement;
+  editControl?: HTMLElement;
+  saveControl?: HTMLElement;
+  cancelControl?: HTMLElement;
 }
+
+let activeEditor: {
+  path: string;
+  sha: string;
+  originalText: string;
+  sourceTextarea: HTMLTextAreaElement | null;
+  mode: "full" | "block";
+  blockFrom?: number;
+  blockTo?: number;
+} | null = null;
+
+let lastFileView: {
+  handles: PaneHandles;
+  path: string;
+  ctx: BlockContext;
+  place?: string;
+  from?: string;
+  record?: string;
+} | null = null;
 
 const IMAGE = /\.(png|jpe?g|gif|webp|avif)$/i;
 
@@ -109,6 +133,7 @@ export async function showFile(
   /** The record on screen — the second ladder, tried when the session's own misses (SPEC 245). */
   record?: string,
 ): Promise<void> {
+  lastFileView = { handles, path, ctx, place, from, record };
   current = path;
   handles.layout.classList.add("file-open");
   // Until the server answers, a relative path is SHOWN joined to the session directory — the
@@ -168,6 +193,22 @@ export async function showFile(
   handles.path.textContent = shown;
   handles.path.dataset["path"] = shown;
 
+  if (handles.editControl) {
+    if (file.writable === true && file.sha !== undefined) {
+      activeEditor = {
+        path: shown,
+        sha: file.sha,
+        originalText: file.text,
+        sourceTextarea: null,
+        mode: "full"
+      };
+      handles.editControl.hidden = false;
+    } else {
+      activeEditor = null;
+      handles.editControl.hidden = true;
+    }
+  }
+
   // A directory is a list of chips, so opening one composes with everything else: each row is the
   // same chip the transcript renders, and clicking it walks down (or back up) without leaving loom.
   if (file.kind === "dir") {
@@ -211,6 +252,72 @@ export async function showFile(
     article.append(renderMarkdown(file.text, ctx, { lines: true }));
     show(handles, article);
     if (place !== undefined) landOn(handles, article, place);
+
+    if (file.writable === true) {
+      article.addEventListener("click", (event) => {
+        // Block-level edit
+        const target = event.target as HTMLElement;
+        const block = target.closest<HTMLElement>("p, h1, h2, h3, h4, h5, h6, li, blockquote, pre");
+        if (!block || !block.hasAttribute("data-line")) return;
+
+        // Find the start line of this block
+        const fromLine = parseInt(block.getAttribute("data-line")!, 10);
+        if (isNaN(fromLine)) return;
+
+        // Find the end line by finding the start line of the *next* block in document order
+        // or the end of the file.
+        const blocks = Array.from(article.querySelectorAll("[data-line]"));
+        const blockIndex = blocks.indexOf(block);
+
+        let toLine = file.text.split("\n").length;
+        for (let i = blockIndex + 1; i < blocks.length; i++) {
+          const nextLine = parseInt(blocks[i]!.getAttribute("data-line")!, 10);
+          if (!isNaN(nextLine) && nextLine > fromLine) {
+            toLine = nextLine - 1;
+            break;
+          }
+        }
+
+        if (!activeEditor) return;
+        activeEditor.mode = "block";
+        activeEditor.blockFrom = fromLine;
+        activeEditor.blockTo = toLine;
+
+        const lines = activeEditor.originalText.split("\n");
+        const blockText = lines.slice(fromLine - 1, toLine).join("\n");
+
+        const textarea = document.createElement("textarea");
+        textarea.className = "file-edit-textarea";
+        textarea.value = blockText;
+        textarea.spellcheck = false;
+
+        // Replace block with textarea
+        block.replaceWith(textarea);
+        activeEditor.sourceTextarea = textarea;
+
+        // Auto-resize textarea to fit content initially roughly
+        textarea.style.height = `${Math.max(3, blockText.split("\n").length)}em`;
+
+        textarea.focus();
+
+        textarea.addEventListener("keydown", (e) => {
+          if (e.key === "s" && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            void handlePaneSave();
+          }
+          if (e.key === "Escape") {
+            e.preventDefault();
+            textarea.blur();
+          }
+        });
+
+        textarea.addEventListener("focusout", (e) => {
+          if (e.relatedTarget && (e.relatedTarget as HTMLElement).id === "file-save") return;
+          handlePaneCancel();
+        });
+      });
+    }
+
     return;
   }
 
@@ -343,4 +450,107 @@ function note(text: string): HTMLElement {
   p.className = "file-note";
   p.textContent = text;
   return p;
+}
+
+export async function reloadActiveFile(): Promise<void> {
+  if (lastFileView === null) return;
+  // Clear current so it forces a reload instead of skipping
+  current = null;
+  await showFile(
+    lastFileView.handles,
+    lastFileView.path,
+    lastFileView.ctx,
+    lastFileView.place,
+    lastFileView.from,
+    lastFileView.record
+  );
+}
+
+export function handlePaneEdit(): void {
+  if (!activeEditor || !lastFileView) return;
+  activeEditor.mode = "full";
+  const textarea = document.createElement("textarea");
+  textarea.className = "file-edit-textarea";
+  textarea.value = activeEditor.originalText;
+  textarea.spellcheck = false;
+  activeEditor.sourceTextarea = textarea;
+  show(lastFileView.handles, textarea);
+
+  if (lastFileView.handles.editControl) lastFileView.handles.editControl.hidden = true;
+  if (lastFileView.handles.saveControl) lastFileView.handles.saveControl.hidden = false;
+  if (lastFileView.handles.cancelControl) lastFileView.handles.cancelControl.hidden = false;
+
+  textarea.focus();
+
+  textarea.addEventListener("keydown", (e) => {
+    if (e.key === "s" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      void handlePaneSave();
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      handlePaneCancel();
+    }
+  });
+}
+
+export async function handlePaneSave(): Promise<void> {
+  if (!activeEditor || !lastFileView || !activeEditor.sourceTextarea) return;
+  const handles = lastFileView.handles;
+  const originalPath = activeEditor.path;
+
+  // Use block splice if in block mode
+  let newText = activeEditor.sourceTextarea.value;
+  if (activeEditor.mode === "block" && activeEditor.blockFrom !== undefined && activeEditor.blockTo !== undefined) {
+    newText = spliceBlock(activeEditor.originalText, activeEditor.blockFrom, activeEditor.blockTo, newText);
+  }
+
+  const query = `path=${encodeURIComponent(originalPath)}`;
+  const response = await fetch(`/api/file?${query}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path: originalPath, text: newText, sha: activeEditor.sha }),
+  });
+
+  if (!response.ok) {
+    if (response.status === 409) {
+      show(handles, refusal(409, "file changed on disk since it was opened", originalPath));
+    } else {
+      const errorText = await response.text().catch(() => "unknown error");
+      show(handles, refusal(response.status, errorText, originalPath));
+    }
+    if (handles.editControl) handles.editControl.hidden = true;
+    if (handles.saveControl) handles.saveControl.hidden = true;
+    if (handles.cancelControl) handles.cancelControl.hidden = true;
+    return;
+  }
+
+  if (handles.saveControl) handles.saveControl.hidden = true;
+  if (handles.cancelControl) handles.cancelControl.hidden = true;
+  await reloadActiveFile();
+}
+
+export function handlePaneCancel(): void {
+  if (!activeEditor || !lastFileView) return;
+  const handles = lastFileView.handles;
+  if (handles.saveControl) handles.saveControl.hidden = true;
+  if (handles.cancelControl) handles.cancelControl.hidden = true;
+  if (handles.editControl) handles.editControl.hidden = false;
+  void reloadActiveFile();
+}
+
+export function spliceBlock(
+  source: string,
+  fromLine: number,
+  toLine: number,
+  replacement: string,
+): string {
+  const lines = source.split("\n");
+  const before = lines.slice(0, fromLine - 1);
+  const after = toLine < lines.length ? lines.slice(toLine) : [];
+
+  const beforeText = before.length > 0 ? before.join("\n") + "\n" : "";
+  const afterText = after.length > 0 ? "\n" + after.join("\n") : "";
+
+  return beforeText + replacement + afterText;
 }

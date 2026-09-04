@@ -75,6 +75,9 @@ import {
   openPath as panePath,
   setEnvironment as setPaneEnvironment,
   showFile,
+  handlePaneEdit,
+  handlePaneSave,
+  handlePaneCancel,
   type PaneHandles,
 } from "./filepane.ts";
 import { renderHypotheses, type Hypothesis, type Standing } from "./hypotheses.ts";
@@ -205,8 +208,21 @@ function drawStamp(): string {
 }
 
 function paneHandles(): PaneHandles {
-  return { layout: ui.layout, head: ui.fileHead, title: ui.fileTitle, path: ui.filePath, body: ui.fileBody };
+  return {
+    layout: ui.layout,
+    head: ui.fileHead,
+    title: ui.fileTitle,
+    path: ui.filePath,
+    body: ui.fileBody,
+    editControl: ui.fileEdit,
+    saveControl: ui.fileSave,
+    cancelControl: ui.fileCancel
+  };
 }
+
+ui.fileEdit.addEventListener("click", () => handlePaneEdit());
+ui.fileSave.addEventListener("click", () => void handlePaneSave());
+ui.fileCancel.addEventListener("click", () => handlePaneCancel());
 
 /**
  * Open a file in the CENTRE (SPEC 189). The Obsidian/Finder hand-off is the ↗ button inside it.
@@ -5074,8 +5090,25 @@ window.addEventListener("pagehide", () => {
 });
 
 document.addEventListener("keydown", (event) => {
-  // Global shortcuts never fire while typing a message.
-  if (document.activeElement === ui.composerText) return;
+  if (event.key === "e" && (event.metaKey || event.ctrlKey)) {
+    const member = selectedOpen(state.opens);
+    if (member.kind === "file" && !ui.fileEdit.hidden) {
+      event.preventDefault();
+      handlePaneEdit();
+      return;
+    }
+  }
+  if (event.key === "s" && (event.metaKey || event.ctrlKey)) {
+    const member = selectedOpen(state.opens);
+    if (member.kind === "file" && !ui.fileSave.hidden) {
+      event.preventDefault();
+      void handlePaneSave();
+      return;
+    }
+  }
+
+  // Global shortcuts never fire while typing a message (or editing a file).
+  if (document.activeElement === ui.composerText || document.activeElement?.tagName === "TEXTAREA") return;
   // Escape closes the SELECTED non-chat member of the open set (SPEC 187, revising 59): the wheel
   // it used to shut is gone, and the file pane it fell through to is one of those members now. The
   // chat is not closable, so Escape does nothing when the chat is what the centre shows.

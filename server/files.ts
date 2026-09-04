@@ -410,3 +410,39 @@ export function looksBinary(bytes: Uint8Array): boolean {
   for (let i = 0; i < limit; i += 1) if (bytes[i] === 0) return true;
   return false;
 }
+
+/**
+ * A narrowing of `decide()`: the writable set is a strict subset of the readable set.
+ * Refuses three read-only vault subtrees (`Diary`, `Archive`, `Highlights`), the `.git`
+ * directory, and files without the `.md`, `.markdown`, or `.txt` extension.
+ *
+ * Like `decide()`, this is pure decision logic — no I/O.
+ */
+export function writable(guard: Guard, raw: string): Decision {
+  const base = decide(guard, raw);
+  if (!base.ok) return base;
+
+  const path = base.path;
+  const segments = path.split(sep);
+  const name = segments[segments.length - 1] ?? "";
+
+  // The read deny-list refuses `.git` as a segment, but to be completely safe against
+  // future changes and explicit requirements, we explicitly refuse `.git` again here.
+  // We also refuse `Diary`, `Archive`, and `Highlights` (specifically Garden/Sources/Highlights,
+  // but checking `Highlights` or the specific path).
+  if (segments.includes(".git")) return { ok: false, status: 403, reason: "read-only location" };
+  if (segments.includes("Diary")) return { ok: false, status: 403, reason: "read-only location" };
+  if (segments.includes("Archive")) return { ok: false, status: 403, reason: "read-only location" };
+
+  // The brief specifies `Garden/Sources/Highlights/`. We could match the exact sub-path:
+  const joined = segments.join("/");
+  if (joined.includes("/Garden/Sources/Highlights/") || joined.endsWith("/Garden/Sources/Highlights") || joined.includes("Garden/Sources/Highlights")) {
+    return { ok: false, status: 403, reason: "read-only location" };
+  }
+
+  if (!/\.(md|markdown|txt)$/i.test(name)) {
+    return { ok: false, status: 403, reason: "not a writable extension" };
+  }
+
+  return base;
+}
