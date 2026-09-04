@@ -219,6 +219,7 @@ export interface ProtoGroup {
   record: string;
   title: string;
   files: ProtoFile[];
+  skipped: string[];
 }
 
 /** Mirrors `Severity` in server/usage.ts. */

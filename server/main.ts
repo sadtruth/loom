@@ -753,7 +753,7 @@ const server = Bun.serve<SocketData, Routes>({
       if (denied !== null) return denied;
       const record = await knownRecord(new URL(req.url).searchParams.get("record"));
       if (record === null) return json({ error: "no such project record" }, 404);
-      return json(await listPrototypes(await scanRecords(RECORD_ROOTS), record.path));
+      return json(await listPrototypes(await scanRecords(RECORD_ROOTS), record.path, await readLinks(LINKS_DIR), ROOT, AGY_ROOT, GUARD));
     },
 
     // Where a prototype ENTERED the conversation: the record's store, first mention. The name is
@@ -766,7 +766,7 @@ const server = Bun.serve<SocketData, Routes>({
       const record = await knownRecord(url.searchParams.get("record"));
       if (record === null) return json({ error: "no such project record" }, 404);
       const name = url.searchParams.get("name") ?? "";
-      const groups = await listPrototypes(await scanRecords(RECORD_ROOTS), record.path);
+      const groups = await listPrototypes(await scanRecords(RECORD_ROOTS), record.path, await readLinks(LINKS_DIR), ROOT, AGY_ROOT, GUARD);
       const owner = groups.find((g) => g.record === record.path && g.files.some((f) => f.name === name));
       if (owner === undefined) return json({ error: "no such prototype" }, 404);
       const key = storeKeyOf(dirname(record.path));
