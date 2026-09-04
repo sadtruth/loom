@@ -3977,6 +3977,8 @@ function connect(rejoin = false): void {
 
       if (unchanged) {
         // Reconnected after backgrounding/sleep, but messages are identical: skip tearing down DOM
+        // A snapshot-painted page reaches this branch with `restoring…` on screen, so set live status.
+        setStatus(`${state.messages.length} msg · live`, "live");
         payOwed();
         markSeen();
         holdEnd();
