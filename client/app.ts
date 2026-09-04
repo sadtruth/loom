@@ -19,6 +19,8 @@
  * wake it, because the redraw may never call it again.
  */
 
+import { loadSnapshot, saveSnapshot } from "./snapshot.ts";
+
 import {
   el,
   collectResults,
@@ -3745,6 +3747,8 @@ async function togglePin(uuid: string, pinned: boolean): Promise<void> {
 // wake/online events short-circuit the wait.
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let reconnectDelay = 1_000;
+let snapshotSaveTimer: ReturnType<typeof setTimeout> | null = null;
+let paintedFromSnapshot = false;
 const RECONNECT_MAX = 15_000;
 
 function scheduleReconnect(): void {
@@ -3860,8 +3864,28 @@ function connect(rejoin = false): void {
     setJob("idle");
     drawAll();
   }
+
+  const snapKey = `${sessionStoreKey()}/${state.sessionId}`;
   const wanted = wantedSocketUrl();
   if (wanted === null) return;
+
+  if (!rejoin) {
+    void (async function paintFromSnapshot(key: string) {
+      const snap = await loadSnapshot(key);
+      if (!snap) return;
+      if (state.socket?.url !== wanted || state.messages.length > 0) return;
+
+      state.cwd = snap.cwd;
+      state.messages = snap.messages;
+      state.artifacts = snap.artifacts;
+      state.pins = snap.pins;
+      rememberAnchors(pendingKey(), snap.accepts ?? []);
+      drawAll();
+      scrollToEnd();
+      setStatus("restoring…");
+      paintedFromSnapshot = true;
+    })(snapKey);
+  }
 
   // A REJOIN's own socket already reconciles `state.job` on attach — `server/main.ts`'s WS `open`
   // handler sends a fresh `job` frame built from `runner.running(id)` on every reattach, not only
@@ -3931,7 +3955,7 @@ function connect(rejoin = false): void {
     if (frame.type === "full") {
       reconnectDelay = 1_000; // attached and served — the link is good again
       const unchanged =
-        rejoin &&
+        (rejoin || paintedFromSnapshot) &&
         state.cwd === frame.meta.cwd &&
         sameMessages(state.messages, frame.messages) &&
         state.artifacts.length === frame.artifacts.length;
@@ -3956,12 +3980,29 @@ function connect(rejoin = false): void {
         payOwed();
         markSeen();
         holdEnd();
+        paintedFromSnapshot = false;
         return;
       }
+      paintedFromSnapshot = false;
     } else if (frame.type === "append") {
       state.messages = [...state.messages, ...frame.messages];
       state.artifacts = frame.artifacts;
       setStatus(`${state.messages.length} msg · live`, "live");
+    }
+    if (frame.type === "full" || frame.type === "append") {
+      if (snapshotSaveTimer !== null) clearTimeout(snapshotSaveTimer);
+      snapshotSaveTimer = setTimeout(() => {
+        const snap = {
+          at: Date.now(),
+          cwd: state.cwd,
+          messages: state.messages,
+          artifacts: state.artifacts,
+          pins: state.pins,
+          accepts: state.anchors[pendingKey()] ?? [],
+        };
+        void saveSnapshot(snapKey, snap);
+        snapshotSaveTimer = null;
+      }, 1000);
     }
     drawAll();
     // The destination is on screen: everything that was told to wait for it may go now.
