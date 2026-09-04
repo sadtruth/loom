@@ -3747,7 +3747,7 @@ async function togglePin(uuid: string, pinned: boolean): Promise<void> {
 // wake/online events short-circuit the wait.
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let reconnectDelay = 1_000;
-let snapshotSaveTimer: ReturnType<typeof setTimeout> | null = null;
+const snapshotSaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
 let paintedFromSnapshot = false;
 const RECONNECT_MAX = 15_000;
 
@@ -3869,24 +3869,6 @@ function connect(rejoin = false): void {
   const wanted = wantedSocketUrl();
   if (wanted === null) return;
 
-  if (!rejoin) {
-    void (async function paintFromSnapshot(key: string) {
-      const snap = await loadSnapshot(key);
-      if (!snap) return;
-      if (state.socket?.url !== wanted || state.messages.length > 0) return;
-
-      state.cwd = snap.cwd;
-      state.messages = snap.messages;
-      state.artifacts = snap.artifacts;
-      state.pins = snap.pins;
-      rememberAnchors(pendingKey(), snap.accepts ?? []);
-      drawAll();
-      scrollToEnd();
-      setStatus("restoring…");
-      paintedFromSnapshot = true;
-    })(snapKey);
-  }
-
   // A REJOIN's own socket already reconciles `state.job` on attach — `server/main.ts`'s WS `open`
   // handler sends a fresh `job` frame built from `runner.running(id)` on every reattach, not only
   // the first connect. This is the DEFENSIVE layer session-truth step 6 adds on top of that: the
@@ -3901,6 +3883,24 @@ function connect(rejoin = false): void {
   const socket = new WebSocket(wanted);
   state.socket = socket;
   setStatus("connecting…");
+
+  if (!rejoin) {
+    void (async function paintFromSnapshot(key: string, currentSocket: WebSocket) {
+      const snap = await loadSnapshot(key);
+      if (!snap) return;
+      if (state.socket !== currentSocket || state.messages.length > 0) return;
+
+      state.cwd = snap.cwd;
+      state.messages = snap.messages;
+      state.artifacts = snap.artifacts;
+      state.pins = snap.pins;
+      rememberAnchors(pendingKey(), snap.accepts ?? []);
+      drawAll();
+      scrollToEnd();
+      setStatus("restoring…");
+      paintedFromSnapshot = true;
+    })(snapKey, socket);
+  }
 
   socket.addEventListener("message", (event) => {
     const frame = JSON.parse(String(event.data)) as Frame;
@@ -3990,19 +3990,23 @@ function connect(rejoin = false): void {
       setStatus(`${state.messages.length} msg · live`, "live");
     }
     if (frame.type === "full" || frame.type === "append") {
-      if (snapshotSaveTimer !== null) clearTimeout(snapshotSaveTimer);
-      snapshotSaveTimer = setTimeout(() => {
-        const snap = {
-          at: Date.now(),
-          cwd: state.cwd,
-          messages: state.messages,
-          artifacts: state.artifacts,
-          pins: state.pins,
-          accepts: state.anchors[pendingKey()] ?? [],
-        };
-        void saveSnapshot(snapKey, snap);
-        snapshotSaveTimer = null;
-      }, 1000);
+      const existing = snapshotSaveTimers.get(snapKey);
+      if (existing !== undefined) clearTimeout(existing);
+      snapshotSaveTimers.set(
+        snapKey,
+        setTimeout(() => {
+          const snap = {
+            at: Date.now(),
+            cwd: state.cwd,
+            messages: state.messages,
+            artifacts: state.artifacts,
+            pins: state.pins,
+            accepts: state.anchors[pendingKey()] ?? [],
+          };
+          void saveSnapshot(snapKey, snap);
+          snapshotSaveTimers.delete(snapKey);
+        }, 1000)
+      );
     }
     drawAll();
     // The destination is on screen: everything that was told to wait for it may go now.

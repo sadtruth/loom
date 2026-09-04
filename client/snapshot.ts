@@ -23,7 +23,10 @@ export async function saveSnapshot(key: string, snap: Snapshot): Promise<void> {
   try {
     const cache = await globalThis.caches.open("loom-snap");
     const response = new Response(JSON.stringify(snap), {
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "x-snap-at": String(snap.at)
+      },
     });
     await cache.put(`/snap/${key}`, response);
 
@@ -34,11 +37,12 @@ export async function saveSnapshot(key: string, snap: Snapshot): Promise<void> {
       const snapKey = new URL(req.url).pathname.replace(/^\/snap\//, "");
       const res = await cache.match(req);
       if (res) {
-        try {
-          const data = (await res.json()) as Snapshot;
-          entries.push({ key: snapKey, at: data.at });
-        } catch {
-          // Ignore invalid entries
+        const atStr = res.headers.get("x-snap-at");
+        if (atStr !== null) {
+          const at = parseInt(atStr, 10);
+          if (!isNaN(at)) {
+            entries.push({ key: snapKey, at });
+          }
         }
       }
     }
