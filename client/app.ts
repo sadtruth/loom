@@ -99,6 +99,7 @@ import {
   firstPermitCard,
   fitComposer,
   keepDraft,
+  flushDraft,
   pendingKey,
   pendingPermits,
   permitAt,
@@ -3651,6 +3652,24 @@ async function sendMessage(): Promise<void> {
     }
     ui.composerText.value = "";
     delete state.drafts[draftOwner];
+
+    // R6: A successful send POSTs a delete and removes the key from localStorage.
+    fetch("/api/draft", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: draftOwner, text: "", at: Date.now() })
+    }).catch(() => {});
+
+    // Also remove from local storage immediately via keepDraft's mirror or manually:
+    try {
+      const stored = localStorage.getItem("loom-drafts");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        delete parsed[draftOwner];
+        localStorage.setItem("loom-drafts", JSON.stringify(parsed));
+      }
+    } catch {}
+
     fitComposer();
     syncDock(); // the draft is gone, so the bar goes back into the flow before the view moves
     state.attachments = [];
@@ -3882,6 +3901,26 @@ function connect(rejoin = false): void {
     const frame = JSON.parse(String(event.data)) as Frame;
     if (frame.type === "error") {
       setStatus(frame.message, "error");
+      return;
+    }
+    if (frame.type === "draft") {
+      const local = state.drafts[frame.key];
+      const localAt = local ? local.at : 0;
+      if (frame.at > localAt) {
+        state.drafts[frame.key] = { text: frame.text, at: frame.at };
+        try {
+          const entries = Object.entries(state.drafts).sort((a, b) => b[1].at - a[1].at);
+          localStorage.setItem("loom-drafts", JSON.stringify(Object.fromEntries(entries.slice(0, 50))));
+        } catch {}
+
+        if (draftOwner === frame.key) {
+          ui.composerText.value = frame.text;
+          fitComposer();
+          syncDock();
+          // R5. put the caret at the end
+          ui.composerText.setSelectionRange(frame.text.length, frame.text.length);
+        }
+      }
       return;
     }
     if (frame.type === "recap") {
@@ -4974,6 +5013,16 @@ ui.composerText.addEventListener("keydown", (event) => {
     event.preventDefault();
     void sendMessage();
   }
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") {
+    void flushDraft();
+  }
+});
+
+window.addEventListener("pagehide", () => {
+  void flushDraft();
 });
 
 document.addEventListener("keydown", (event) => {

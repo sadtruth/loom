@@ -76,6 +76,7 @@ import {
 } from "./recap/service.ts";
 import type { Entry as RecapEntry } from "./recap/ledger.ts";
 import { readAll as readSeen, writeOwn as writeSeen } from "./seen.ts";
+import { readDraft, writeDraft } from "./drafts.ts";
 import { SubagentWatcher } from "./subagent-watcher.ts";
 import { createTask, julesClientOrNull, listTasks, readTask, startPolling } from "./jules/service.ts";
 import { isTerminalState } from "./jules/parser.ts";
@@ -208,6 +209,7 @@ interface SocketData {
 }
 
 type Frame =
+  | { type: "draft"; key: string; text: string; at: number }
   | {
       type: "full";
       meta: unknown;
@@ -464,6 +466,7 @@ function requireAuth(req: Request): Response | null {
 // Both generics must be explicit: Bun.serve<WebSocketData, RoutePaths>. Fixing the first without the
 // second collapses RoutePaths to `never` and every req.params access loses its type.
 type Routes =
+  | "/api/draft"
   | "/api/recap"
   | "/api/recap/dismiss"
   | "/api/recap/rerun"
@@ -1585,6 +1588,50 @@ const server = Bun.serve<SocketData, Routes>({
           );
         }
         return json({ session: sessionId, resumed: resume, queued: started.queued, pending: started.pending });
+      },
+    },
+
+    // The block after a reload: the ledger is the truth, not the socket frame that delivered it.
+    //
+    // With a `session`, this is the block itself (requirement 180) — the newest entry about the car
+    // BEFORE it, and nothing at all for an old car, a refused one, or a record whose ledger says
+    // nothing about its predecessor. It restores the screen and never the carry: the reminder either
+    // already rode his first message or never will, so this cannot become a second delivery.
+    "/api/draft": {
+      GET: async (req) => {
+        const denied = requireAuth(req);
+        if (denied !== null) return denied;
+        const key = new URL(req.url).searchParams.get("key");
+        if (typeof key !== "string") return json({ error: "key required" }, 400);
+        return json(await readDraft(STATE_DIR, key));
+      },
+      POST: async (req) => {
+        const denied = requireAuth(req);
+        if (denied !== null) return denied;
+        let body: unknown;
+        try {
+          // sendBeacon posts application/json bodies but we might need req.json() or read it from text.
+          // req.json() automatically works for application/json bodies, even from blobs.
+          body = await req.json();
+        } catch {
+          return json({ error: "invalid json" }, 400);
+        }
+
+        if (typeof body !== "object" || body === null) return json({ error: "bad payload" }, 400);
+        const b = body as Record<string, unknown>;
+        if (typeof b.key !== "string") return json({ error: "bad key" }, 400);
+        if (typeof b.text !== "string") return json({ error: "bad text" }, 400);
+        if (b.text.length > 200000) return json({ error: "text too long" }, 400);
+        if (typeof b.at !== "number" || !Number.isFinite(b.at)) return json({ error: "bad at" }, 400);
+
+        const stored = await writeDraft(STATE_DIR, b.key, { text: b.text, at: b.at });
+
+        if (!b.key.startsWith("new:") && stored.text === b.text && stored.at === b.at) {
+          // value was changed. broadcast.
+          broadcastToSession(b.key, { type: "draft", key: b.key, text: stored.text, at: stored.at });
+        }
+
+        return json(stored);
       },
     },
 

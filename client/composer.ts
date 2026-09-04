@@ -151,12 +151,70 @@ function draftKey(): string {
 /** The key the box's current text belongs to — the one it was typed under, not the one now open. */
 export let draftOwner = "";
 
+let draftTimeout: ReturnType<typeof setTimeout> | null = null;
+const DRAFT_DEBOUNCE_MS = 400;
+
+export async function flushDraft(): Promise<void> {
+  if (draftTimeout !== null) {
+    clearTimeout(draftTimeout);
+    draftTimeout = null;
+  }
+
+  if (draftOwner.length === 0) return;
+  const owner = draftOwner;
+  const text = ui.composerText.value;
+  const at = Date.now();
+
+  if (text.length === 0) delete state.drafts[owner];
+  else state.drafts[owner] = { text, at };
+
+  mirrorDrafts();
+
+  if (state.socket && state.socket.readyState === WebSocket.OPEN) {
+    try {
+      await fetch("/api/draft", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: owner, text, at }),
+        signal: AbortSignal.timeout(1500)
+      });
+    } catch {
+      // Ignored: network failure during flush
+    }
+  }
+}
+
+function mirrorDrafts() {
+  const entries = Object.entries(state.drafts).sort((a, b) => b[1].at - a[1].at);
+  const capped = Object.fromEntries(entries.slice(0, 50));
+  state.drafts = capped;
+  try {
+    localStorage.setItem("loom-drafts", JSON.stringify(capped));
+  } catch {
+    // quota exceeded or incognito
+  }
+}
+
 /** Remember what is in the box, under the session it was typed for. */
 export function keepDraft(): void {
   if (draftOwner.length === 0) draftOwner = draftKey();
   const text = ui.composerText.value;
+  const at = Date.now();
   if (text.length === 0) delete state.drafts[draftOwner];
-  else state.drafts[draftOwner] = text;
+  else state.drafts[draftOwner] = { text, at };
+  mirrorDrafts();
+
+  if (draftTimeout !== null) clearTimeout(draftTimeout);
+  const owner = draftOwner; // capture the current owner for the timeout
+  draftTimeout = setTimeout(() => {
+    draftTimeout = null;
+    const body = { key: owner, text: text, at };
+    fetch("/api/draft", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    }).catch(() => {});
+  }, DRAFT_DEBOUNCE_MS);
 }
 
 /**
@@ -169,18 +227,57 @@ export function switchDraft(): void {
   if (now === draftOwner) return;
   keepDraft();
   draftOwner = now;
-  ui.composerText.value = state.drafts[now] ?? "";
+  ui.composerText.value = state.drafts[now]?.text ?? "";
   fitComposer();
   syncDock();
+
+  // Conditionally refresh text if server has a newer version.
+  fetch(`/api/draft?key=${encodeURIComponent(now)}`)
+    .then(res => {
+      if (res.ok) return res.json();
+      throw new Error();
+    })
+    .then(data => {
+      if (typeof data !== "object" || data === null) return;
+      const { text, at } = data as { text?: string, at?: number };
+      if (typeof text !== "string" || typeof at !== "number") return;
+
+      const local = state.drafts[now];
+      const localAt = local ? local.at : 0;
+      if (at > localAt) {
+        state.drafts[now] = { text, at };
+        mirrorDrafts();
+        if (draftOwner === now) {
+          ui.composerText.value = text;
+          fitComposer();
+          syncDock();
+        }
+      }
+    })
+    .catch(() => {});
 }
 
 /** A session that has just been named keeps the draft composed under its placeholder key. */
 export function renameDraft(from: string, to: string): void {
   if (from === to) return;
-  const text = state.drafts[from];
-  if (text !== undefined) {
-    state.drafts[to] = text;
+  const entry = state.drafts[from];
+  if (entry !== undefined) {
+    state.drafts[to] = entry;
     delete state.drafts[from];
+    mirrorDrafts();
+
+    // R6. Rename posts a delete for `from` and a write for `to` (with the same `at`).
+    fetch("/api/draft", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: from, text: "", at: entry.at })
+    }).catch(() => {});
+
+    fetch("/api/draft", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: to, text: entry.text, at: entry.at })
+    }).catch(() => {});
   }
   if (draftOwner === from) draftOwner = to;
 }
