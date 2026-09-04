@@ -19,7 +19,8 @@ import { embedPage } from "./embed.ts";
 
 interface FileResponse {
   path: string;
-  kind: "markdown" | "text" | "dir" | "page";
+  kind: "markdown" | "text" | "dir" | "page" | "pdf" | "download";
+  truncated?: boolean;
   bytes: number;
   text: string;
   /** Present for `kind: "dir"` — one row per entry, directories first (SPEC 141). */
@@ -35,7 +36,7 @@ export interface PaneHandles {
   body: HTMLElement;
 }
 
-const IMAGE = /\.(png|jpe?g|gif|webp|avif)$/i;
+const IMAGE = /\.(png|jpe?g|gif|webp|avif|bmp|ico|heic|heif|tif|tiff)$/i;
 
 function base(path: string): string {
   return path.split("/").filter((s) => s.length > 0).slice(-1)[0] ?? path;
@@ -198,9 +199,56 @@ export async function showFile(
   // carries the way out to a tab under it — so the pane and the plan cannot drift apart. User,
   // 2026-08-24: *"i dont really need to see the source of prototype … maybe even never"*, so there
   // is no switch: the source is reachable the way any other file's is, through the editor.
+
+  if (file.kind === "pdf") {
+    const frame = document.createElement("iframe");
+    frame.className = "file-embed";
+    frame.src = `/api/file?${query}&raw=1`;
+    show(handles, frame);
+    return;
+  }
+
+  if (file.kind === "download") {
+    const box = document.createElement("div");
+    box.className = "file-note file-download";
+    box.append(Object.assign(document.createElement("p"), { textContent: `${base(shown)} (${readableBytes(file.bytes)})` }));
+
+    const actions = document.createElement("div");
+    actions.className = "file-roots";
+
+    const rawLink = document.createElement("a");
+    rawLink.href = `/api/file?${query}&raw=1`;
+    rawLink.target = "_blank";
+    rawLink.textContent = "open raw in tab";
+
+    const dlLink = document.createElement("a");
+    dlLink.href = `/api/file?${query}&raw=1`;
+    dlLink.download = base(shown);
+    dlLink.textContent = "download";
+
+    actions.append(rawLink, " · ", dlLink);
+    box.append(actions);
+
+    show(handles, box);
+    return;
+  }
+
   if (file.kind === "page") {
     show(handles, embedPage(shown, ""));
     return;
+  }
+
+  let container: HTMLElement | null = null;
+  if (file.truncated) {
+    container = document.createElement("div");
+    const truncNote = note("");
+    truncNote.textContent = `showing the first 2 MB of ${readableBytes(file.bytes)} — `;
+    const rawLink = document.createElement("a");
+    rawLink.href = `/api/file?${query}&raw=1`;
+    rawLink.target = "_blank";
+    rawLink.textContent = "open raw";
+    truncNote.append(rawLink);
+    container.append(truncNote);
   }
 
   if (file.kind === "markdown") {
@@ -209,12 +257,26 @@ export async function showFile(
     // `lines: true` — the rendered blocks carry the source line they start at, so a `:86` chip can
     // land inside a record instead of reporting that the file has no such line (item 13).
     article.append(renderMarkdown(file.text, ctx, { lines: true }));
-    show(handles, article);
+
+    if (container) {
+      container.append(article);
+      show(handles, container);
+    } else {
+      show(handles, article);
+    }
+
     if (place !== undefined) landOn(handles, article, place);
     return;
   }
 
-  show(handles, codeView(shown, file.text));
+  const cv = codeView(shown, file.text);
+  if (container) {
+    container.append(cv);
+    show(handles, container);
+  } else {
+    show(handles, cv);
+  }
+
   if (place !== undefined) landOn(handles, handles.body, place);
 }
 

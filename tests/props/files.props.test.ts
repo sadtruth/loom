@@ -225,8 +225,8 @@ describe("kind detection", () => {
     expect(kindOf("/vault/a.ts")).toBe("text");
     expect(kindOf("/vault/a.png")).toBe("image");
     expect(kindOf("/vault/Makefile")).toBe("text");
-    expect(kindOf("/vault/a.zip")).toBe(null);
-    expect(kindOf("/vault/a.pdf")).toBe(null);
+    expect(kindOf("/vault/a.zip")).toBe("download");
+    expect(kindOf("/vault/a.pdf")).toBe("pdf");
   });
 
   test("a NUL byte in the head means binary", () => {
@@ -290,5 +290,91 @@ describe("relative paths climb from the session directory", () => {
     if (!missing.ok) expect(missing.status).toBe(404);
 
     await rm(root, { recursive: true, force: true });
+  });
+});
+
+describe("kindOf properties", () => {
+  test("kindOf is total", () => {
+    fc.assert(
+      fc.property(fc.string(), (path) => {
+        const kind = kindOf(path);
+        expect(kind).not.toBeNull();
+        expect(kind).not.toBeUndefined();
+        expect(["markdown", "text", "image", "page", "pdf", "download"]).toContain(kind);
+      })
+    );
+  });
+
+  test("a path's kind depends only on its extension", () => {
+    fc.assert(
+      fc.property(fc.string(), fc.string(), fc.string(), (ext, pathA, pathB) => {
+        // Strip out dots from generated base names to ensure they don't look like extensions.
+        // Actually, kindOf just checks \.extension$, so as long as we append .ext it will be consistent.
+        const cleanA = pathA.replace(/\./g, "");
+        const cleanB = pathB.replace(/\./g, "");
+        const cleanExt = ext.replace(/[^a-zA-Z0-9]/g, "");
+
+        const fullA = cleanA + "." + cleanExt;
+        const fullB = cleanB + "." + cleanExt;
+
+        // As long as the base path doesn't contain extra dots that match \.ext$, it should be perfectly consistent.
+        // Even if it did, since we append the same extension at the end, it should return the same kind.
+        // There is one exception: kindOf uses .test(path). If a path is JUST the extension (like ".html"),
+        // it might match.
+        expect(kindOf(fullA)).toBe(kindOf(fullB));
+      })
+    );
+  });
+});
+
+import { truncateUtf8 } from "../../server/files.ts";
+
+describe("truncation properties", () => {
+  test("truncateUtf8 arithmetic", () => {
+    fc.assert(
+      fc.property(fc.uint8Array(), fc.integer({ min: 0, max: 10000 }), (bytes, max) => {
+        const truncatedBytes = truncateUtf8(bytes, max);
+
+        // 1. the returned text (bytes) is always a PREFIX of the input
+        expect(truncatedBytes.length).toBeLessThanOrEqual(bytes.length);
+        for (let i = 0; i < truncatedBytes.length; i++) {
+          expect(truncatedBytes[i]).toBe(bytes[i]);
+        }
+
+        // 2. truncated is true exactly when the returned byte length is less than the file's byte length
+        const isTruncated = truncatedBytes.length < bytes.length;
+        // In the route, "truncated" is derived from file.size > MAX_BYTES, but the property says:
+        // "the returned text is always a PREFIX of the input, truncated is true exactly when the returned byte length is less than the file's byte length"
+        if (bytes.length <= max) {
+          expect(isTruncated).toBe(false);
+          expect(truncatedBytes.length).toBe(bytes.length);
+        } else {
+          expect(truncatedBytes.length).toBeLessThanOrEqual(max);
+        }
+
+        // 3. returned bytes never split a UTF-8 sequence
+        // We verify this by using TextDecoder on the truncated bytes.
+        // TextDecoder by default will insert the replacement character U+FFFD if a sequence is split.
+        // But some sequences might be incomplete but valid prefixes.
+        // We can check the string ends cleanly. TextDecoder has { fatal: true } which throws on bad utf-8.
+        // However, our input might be random bytes (not valid utf-8 to begin with).
+        // The property specifically cares about not splitting *valid* multi-byte sequences.
+      })
+    );
+  });
+
+  test("truncateUtf8 never splits a valid UTF-8 sequence", () => {
+    fc.assert(
+      fc.property(fc.string(), fc.integer({ min: 0, max: 10000 }), (str, max) => {
+        const encoder = new TextEncoder();
+        const bytes = encoder.encode(str);
+
+        const truncatedBytes = truncateUtf8(bytes, max);
+
+        const decoder = new TextDecoder("utf-8", { fatal: true });
+        // This will throw if the truncatedBytes ends in the middle of a UTF-8 sequence
+        expect(() => decoder.decode(truncatedBytes)).not.toThrow();
+      })
+    );
   });
 });
