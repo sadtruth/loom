@@ -37,8 +37,8 @@ export interface Guard {
 }
 
 /** Names that are never worth reading through a browser, wherever they sit inside an allowed root. */
-const DENY_SEGMENT = new Set([".ssh", ".gnupg", ".aws", ".password-store", "node_modules", ".git"]);
-const DENY_NAME = /^(\.env(\..*)?|id_(rsa|ed25519|ecdsa)(\.pub)?|.*\.(pem|key|p12|kdbx))$/i;
+export const DENY_SEGMENT = new Set([".ssh", ".gnupg", ".aws", ".password-store", "node_modules", ".git"]);
+export const DENY_NAME = /^(\.env(\..*)?|id_(rsa|ed25519|ecdsa)(\.pub)?|.*\.(pem|key|p12|kdbx))$/i;
 
 /** 2 MB. A transcript pane is for reading, and anything larger is a download, not a read. */
 export const MAX_BYTES = 2 * 1024 * 1024;

@@ -10,15 +10,17 @@
  * kept in an index nothing maintains.
  */
 
-import { readdir, stat } from "node:fs/promises";
-import { dirname, join } from "node:path";
-import type { RecordInfo } from "./records.ts";
 
-export interface ProtoGroup {
-  record: string;
-  title: string;
-  files: Array<{ name: string; path: string; mtime: number }>;
-}
+import { readdir, stat, } from "node:fs/promises";
+import { dirname, join, sep } from "node:path";
+import type { RecordInfo } from "./records.ts";
+import { DENY_SEGMENT, DENY_NAME, decide, type Guard } from "./files.ts";
+import { extractPaths } from "../client/paths.ts";
+import { storeKeyOf } from "./train.ts";
+import { cwdFor } from "./cores.ts";
+import { sessionsOf } from "./links.ts";
+import type { ProtoGroup } from "../client/types.ts";
+
 
 /** The record and every descendant, breadth-first — the record itself always leads. */
 export function subtreeOf(records: readonly RecordInfo[], path: string): RecordInfo[] {
@@ -39,26 +41,136 @@ export function subtreeOf(records: readonly RecordInfo[], path: string): RecordI
   return out;
 }
 
+
+
+/**
+ * PURE logic for deduplicating prototype files found across multiple origins.
+ * Files with the same absolute path are merged, and their origins are combined.
+ */
+export function deduplicateProtos(
+  files: readonly { name: string; path: string; mtime: number; origins: string[] }[]
+): { name: string; path: string; mtime: number; origins: string[] }[] {
+  const map = new Map<string, { name: string; path: string; mtime: number; origins: Set<string> }>();
+  for (const f of files) {
+    const existing = map.get(f.path);
+    if (existing) {
+      for (const o of f.origins) existing.origins.add(o);
+    } else {
+      map.set(f.path, { name: f.name, path: f.path, mtime: f.mtime, origins: new Set(f.origins) });
+    }
+  }
+  return Array.from(map.values())
+    .map(f => ({ name: f.name, path: f.path, mtime: f.mtime, origins: Array.from(f.origins).sort() }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
 /** Groups in subtree order; a record without a mockups/ directory contributes nothing. */
-export async function listPrototypes(records: readonly RecordInfo[], path: string): Promise<ProtoGroup[]> {
+export async function listPrototypes(records: readonly RecordInfo[], path: string, links: ReadonlyMap<string, string>, root: string, agyRoot: string, guard: Guard): Promise<ProtoGroup[]> {
   const groups: ProtoGroup[] = [];
   for (const record of subtreeOf(records, path)) {
+    const skipped: string[] = [];
+    const foundRaw: { name: string; path: string; mtime: number; origins: string[] }[] = [];
+
+    // 1. mockups
     const dir = join(dirname(record.path), "mockups");
-    let names: string[];
     try {
-      names = (await readdir(dir)).filter((n) => /\.html?$/i.test(n));
-    } catch {
-      continue;
-    }
-    const files: ProtoGroup["files"] = [];
-    for (const name of names) {
-      try {
-        files.push({ name, path: join(dir, name), mtime: (await stat(join(dir, name))).mtimeMs });
-      } catch {
-        continue; // raced a deletion — not this route's problem
+      const names = (await readdir(dir)).filter((n) => /\.html?$/i.test(n));
+      for (const name of names) {
+        const fullPath = join(dir, name);
+        try {
+          const s = await stat(fullPath);
+          if (decide(guard, fullPath).ok) {
+            foundRaw.push({ name, path: fullPath, mtime: s.mtimeMs, origins: ["mockups"] });
+          }
+        } catch {
+          if (!skipped.includes("mockups")) skipped.push("mockups");
+        }
       }
+    } catch {
+      skipped.push("mockups");
     }
-    if (files.length > 0) groups.push({ record: record.path, title: record.title, files });
+
+    // 2. folder
+    const folderDir = dirname(record.path);
+    let level = [folderDir];
+    let depth = 0;
+    while (level.length > 0 && depth <= 6) {
+      const nextLevel: string[] = [];
+      for (const d of level) {
+        try {
+          const entries = await readdir(d, { withFileTypes: true });
+          for (const entry of entries) {
+            if (entry.name.startsWith(".") || DENY_SEGMENT.has(entry.name) || DENY_NAME.test(entry.name)) continue;
+
+            const entryPath = join(d, entry.name);
+            if (entry.isDirectory()) {
+              nextLevel.push(entryPath);
+            } else if (/\.html?$/i.test(entry.name)) {
+              try {
+                const s = await stat(entryPath);
+                if (decide(guard, entryPath).ok) {
+                  foundRaw.push({ name: entry.name, path: entryPath, mtime: s.mtimeMs, origins: ["folder"] });
+                }
+              } catch {
+                if (!skipped.includes(d)) skipped.push(d);
+              }
+            }
+          }
+        } catch {
+          if (!skipped.includes(d)) skipped.push(d);
+        }
+      }
+      level = nextLevel;
+      depth++;
+    }
+
+    // 3. linked
+    try {
+      const ids = sessionsOf(record.path, links);
+      const ownKey = storeKeyOf(dirname(record.path));
+      const coreKey = storeKeyOf(cwdFor(record.path));
+
+      const storesToSearch = [
+        join(root, ownKey),
+        join(root, coreKey),
+        join(agyRoot, ownKey),
+        join(agyRoot, coreKey)
+      ];
+
+      const uniqueStores = [...new Set(storesToSearch)];
+
+      for (const store of uniqueStores) {
+        for (const sessionId of ids) {
+          const sessionFile = join(store, `${sessionId}.jsonl`);
+          try {
+            const text = await Bun.file(sessionFile).text();
+            for (const match of extractPaths(text)) {
+              if (/\.html?$/i.test(match.path)) {
+                try {
+                  const s = await stat(match.path);
+                  const name = match.path.split(sep).pop() ?? "";
+                  if (decide(guard, match.path).ok) {
+                    foundRaw.push({ name, path: match.path, mtime: s.mtimeMs, origins: ["linked"] });
+                  }
+                } catch {
+                  // File not found on disk, ignore.
+                }
+              }
+            }
+          } catch {
+            // Probably file not in this store.
+          }
+        }
+      }
+    } catch {
+      if (!skipped.includes("linked")) skipped.push("linked");
+    }
+
+    const files = deduplicateProtos(foundRaw);
+
+    if (files.length > 0 || record.path === path) {
+      groups.push({ record: record.path, title: record.title, files, skipped });
+    }
   }
   return groups;
 }

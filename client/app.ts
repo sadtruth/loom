@@ -1391,6 +1391,13 @@ function drawDrawerProtos(): void {
     heading.textContent = group.record === path ? `${group.title} — this record` : group.title;
     section.append(heading);
 
+    for (const skip of group.skipped) {
+      const skipP = document.createElement("p");
+      skipP.className = "art-empty";
+      skipP.textContent = `skipped: ${skip}`;
+      section.append(skipP);
+    }
+
     for (const chain of groupProtos(group.files)) {
       section.append(protoRow(group.record, chain.latest, { head: true }));
       if (chain.older.length > 0) {
@@ -1425,6 +1432,13 @@ function protoRow(
     ? version.name.replace(/\.html?$/i, "")
     : [`v${version.version}`, version.change].filter((p) => p !== null).join(" · ");
   row.append(name);
+
+  for (const origin of version.origins || []) {
+    const badge = document.createElement("span");
+    badge.className = "proto-v";
+    badge.textContent = origin;
+    row.append(badge);
+  }
 
   if (options.head && version.version > 1) {
     const badge = document.createElement("span");

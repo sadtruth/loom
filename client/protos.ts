@@ -10,6 +10,7 @@ export interface ProtoFile {
   name: string;
   path: string;
   mtime: number;
+  origins: string[];
 }
 
 export interface ProtoVersion extends ProtoFile {
