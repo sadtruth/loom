@@ -151,36 +151,62 @@ function draftKey(): string {
 /** The key the box's current text belongs to — the one it was typed under, not the one now open. */
 export let draftOwner = "";
 
-let draftTimeout: ReturnType<typeof setTimeout> | null = null;
+const draftTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const pendingWrites = new Map<string, { text: string; at: number }>();
 const DRAFT_DEBOUNCE_MS = 400;
 
-export async function flushDraft(): Promise<void> {
-  if (draftTimeout !== null) {
-    clearTimeout(draftTimeout);
-    draftTimeout = null;
+export async function flushDraft(beacon = false): Promise<void> {
+  for (const timeout of draftTimers.values()) clearTimeout(timeout);
+  draftTimers.clear();
+
+  if (draftOwner.length > 0) {
+    const text = ui.composerText.value;
+    const at = Date.now();
+    if (text.length === 0) delete state.drafts[draftOwner];
+    else state.drafts[draftOwner] = { text, at };
+    pendingWrites.set(draftOwner, { text, at });
   }
-
-  if (draftOwner.length === 0) return;
-  const owner = draftOwner;
-  const text = ui.composerText.value;
-  const at = Date.now();
-
-  if (text.length === 0) delete state.drafts[owner];
-  else state.drafts[owner] = { text, at };
 
   mirrorDrafts();
 
-  if (state.socket && state.socket.readyState === WebSocket.OPEN) {
-    try {
-      await fetch("/api/draft", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ key: owner, text, at }),
-        signal: AbortSignal.timeout(1500)
-      });
-    } catch {
-      // Ignored: network failure during flush
+  if (pendingWrites.size === 0) return;
+
+  const writes = Array.from(pendingWrites.entries());
+  pendingWrites.clear();
+
+  if (beacon) {
+    for (const [key, { text, at }] of writes) {
+      const json = JSON.stringify({ key, text, at });
+      const blob = new Blob([json], { type: "application/json" });
+      if (!navigator.sendBeacon("/api/draft", blob)) {
+        try {
+          fetch("/api/draft", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: json,
+            keepalive: true
+          }).catch(() => {});
+        } catch {}
+      }
     }
+    return;
+  }
+
+  const c = new AbortController();
+  const id = setTimeout(() => c.abort(), 1500);
+  try {
+    await Promise.all(
+      writes.map(([key, { text, at }]) =>
+        fetch("/api/draft", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ key, text, at }),
+          signal: c.signal
+        }).catch(() => {})
+      )
+    );
+  } finally {
+    clearTimeout(id);
   }
 }
 
@@ -200,21 +226,32 @@ export function keepDraft(): void {
   if (draftOwner.length === 0) draftOwner = draftKey();
   const text = ui.composerText.value;
   const at = Date.now();
-  if (text.length === 0) delete state.drafts[draftOwner];
-  else state.drafts[draftOwner] = { text, at };
+  const owner = draftOwner;
+
+  if (text.length === 0) delete state.drafts[owner];
+  else state.drafts[owner] = { text, at };
   mirrorDrafts();
 
-  if (draftTimeout !== null) clearTimeout(draftTimeout);
-  const owner = draftOwner; // capture the current owner for the timeout
-  draftTimeout = setTimeout(() => {
-    draftTimeout = null;
-    const body = { key: owner, text: text, at };
-    fetch("/api/draft", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
-    }).catch(() => {});
-  }, DRAFT_DEBOUNCE_MS);
+  pendingWrites.set(owner, { text, at });
+
+  const existing = draftTimers.get(owner);
+  if (existing !== undefined) clearTimeout(existing);
+
+  draftTimers.set(
+    owner,
+    setTimeout(() => {
+      draftTimers.delete(owner);
+      const pending = pendingWrites.get(owner);
+      if (pending === undefined) return;
+      pendingWrites.delete(owner);
+
+      fetch("/api/draft", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: owner, text: pending.text, at: pending.at })
+      }).catch(() => {});
+    }, DRAFT_DEBOUNCE_MS)
+  );
 }
 
 /**

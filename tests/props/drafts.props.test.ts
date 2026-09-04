@@ -22,6 +22,7 @@ describe("newerDraft pure properties", () => {
       })
     );
   });
+
 });
 
 describe("drafts filesystem properties", () => {
@@ -35,6 +36,15 @@ describe("drafts filesystem properties", () => {
     if (existsSync(tmpDir)) {
       rmSync(tmpDir, { recursive: true, force: true });
     }
+  });
+
+  test("text over the cap (200,000 characters) is refused and writes nothing", async () => {
+    const text = "a".repeat(200001);
+    const draft = { text, at: 100 };
+    const res = await writeDraft(tmpDir, "testkey", draft);
+    expect(res).toEqual({ text: "", at: 0 });
+    const read = await readDraft(tmpDir, "testkey");
+    expect(read).toEqual({ text: "", at: 0 });
   });
 
   test("keys outside regex are refused and write nothing", async () => {
