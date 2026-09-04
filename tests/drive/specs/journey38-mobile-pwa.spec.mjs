@@ -119,6 +119,33 @@ test("PWA manifest, raster PNG icons and mobile meta tags are present", async ({
   const icon512 = await request.get("/icon-512.png");
   expect(icon512.status()).toBe(200);
   expect(icon512.headers()["content-type"]).toBe("image/png");
+
+  // R6: manifest must declare a stable id and display_override=["standalone"]
+  expect(manifest.id).toBe("/");
+  expect(manifest.display_override).toEqual(["standalone"]);
+
+  // R1: Bun's hot-reload client must not be injected (it calls location.reload() under the user)
+  const bunDevScript = await page.locator("[data-bun-dev-server-script]").count();
+  expect(bunDevScript).toBe(0);
+  const inlineScriptCount = await page.evaluate(
+    () => document.querySelectorAll("script:not([src])").length,
+  );
+  expect(inlineScriptCount).toBe(0);
+
+  // R5: service worker must register and become ready within 5 s
+  const swReady = await page.evaluate(async () => {
+    if (!("serviceWorker" in navigator)) return false;
+    try {
+      await Promise.race([
+        navigator.serviceWorker.ready,
+        new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 5000)),
+      ]);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  expect(swReady).toBe(true);
 });
 
 test("middle swipe gestures open and close left rail and right drawer", async ({ page }) => {

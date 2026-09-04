@@ -2,10 +2,11 @@
   "name": "loom",
   "short_name": "loom",
   "description": "The main interface to Claude Code",
+  "id": "/",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "display_override": ["standalone"],
   "background_color": "#ffffff",
   "theme_color": "#ffffff",
   "icons": [

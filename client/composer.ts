@@ -9,6 +9,18 @@ import { toast } from "./status.ts";
 import { state, ui } from "./store.ts";
 import type { PendingEcho, Permit } from "./types.ts";
 
+// R5: the box must be right before the first network answer, so the mirror is read at import time.
+try {
+  const raw = localStorage.getItem("loom-drafts");
+  if (raw !== null) {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    for (const [key, value] of Object.entries(parsed)) {
+      const v = value as { text?: unknown; at?: unknown };
+      if (typeof v?.text === "string" && typeof v?.at === "number") state.drafts[key] = { text: v.text, at: v.at };
+    }
+  }
+} catch {}
+
 export function syncDock(): void {
   const composer = ui.composer;
   // Docking is a statement about the composer's place in the CHAT's flow: it docks when that place
@@ -151,12 +163,87 @@ function draftKey(): string {
 /** The key the box's current text belongs to — the one it was typed under, not the one now open. */
 export let draftOwner = "";
 
+const draftTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const DRAFT_DEBOUNCE_MS = 400;
+
+export async function flushDraft(): Promise<void> {
+  const pendingKeys = new Set(draftTimers.keys());
+  for (const timer of draftTimers.values()) {
+    clearTimeout(timer);
+  }
+  draftTimers.clear();
+
+  if (draftOwner.length > 0) {
+    const text = ui.composerText.value;
+    const at = Date.now();
+    if (text.length === 0) delete state.drafts[draftOwner];
+    else state.drafts[draftOwner] = { text, at };
+    mirrorDrafts();
+    pendingKeys.add(draftOwner);
+  }
+
+  for (const key of pendingKeys) {
+    const entry = state.drafts[key] ?? { text: "", at: Date.now() };
+    const json = JSON.stringify({ key, text: entry.text, at: entry.at });
+    // A discarded tab kills an in-flight fetch; a beacon is handed to the browser and survives it.
+    const blob = new Blob([json], { type: "application/json" });
+    if (!navigator.sendBeacon("/api/draft", blob)) {
+      try {
+        await fetch("/api/draft", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: json,
+          keepalive: true,
+          signal: AbortSignal.timeout(1500),
+        });
+      } catch {}
+    }
+  }
+}
+
+export function mirrorDrafts(): void {
+  const entries = Object.entries(state.drafts).sort((a, b) => b[1].at - a[1].at);
+  const capped = Object.fromEntries(entries.slice(0, 50));
+  state.drafts = capped;
+  try {
+    localStorage.setItem("loom-drafts", JSON.stringify(capped));
+  } catch {
+    // quota exceeded or incognito
+  }
+}
+
+export function cancelDraftTimer(owner: string): void {
+  const existing = draftTimers.get(owner);
+  if (existing !== undefined) {
+    clearTimeout(existing);
+    draftTimers.delete(owner);
+  }
+}
+
 /** Remember what is in the box, under the session it was typed for. */
 export function keepDraft(): void {
   if (draftOwner.length === 0) draftOwner = draftKey();
   const text = ui.composerText.value;
+  const at = Date.now();
   if (text.length === 0) delete state.drafts[draftOwner];
-  else state.drafts[draftOwner] = text;
+  else state.drafts[draftOwner] = { text, at };
+  mirrorDrafts();
+
+  const owner = draftOwner;
+  const existing = draftTimers.get(owner);
+  if (existing !== undefined) clearTimeout(existing);
+  draftTimers.set(
+    owner,
+    setTimeout(() => {
+      draftTimers.delete(owner);
+      const body = { key: owner, text, at };
+      fetch("/api/draft", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }).catch(() => {});
+    }, DRAFT_DEBOUNCE_MS),
+  );
 }
 
 /**
@@ -167,20 +254,61 @@ export function keepDraft(): void {
 export function switchDraft(): void {
   const now = draftKey();
   if (now === draftOwner) return;
-  keepDraft();
+  if (draftOwner.length > 0) keepDraft();
   draftOwner = now;
-  ui.composerText.value = state.drafts[now] ?? "";
+  ui.composerText.value = state.drafts[now]?.text ?? "";
   fitComposer();
   syncDock();
+
+  // Conditionally refresh text if server has a newer version.
+  fetch(`/api/draft?key=${encodeURIComponent(now)}`, { signal: AbortSignal.timeout(3000) })
+    .then((res) => {
+      if (res.ok) return res.json();
+      throw new Error();
+    })
+    .then((data) => {
+      if (typeof data !== "object" || data === null) return;
+      const { text, at } = data as { text?: string; at?: number };
+      if (typeof text !== "string" || typeof at !== "number") return;
+
+      const local = state.drafts[now];
+      const localAt = local ? local.at : 0;
+      if (at > localAt) {
+        if (text.length === 0) delete state.drafts[now];
+        else state.drafts[now] = { text, at };
+        mirrorDrafts();
+        if (draftOwner === now) {
+          ui.composerText.value = text;
+          fitComposer();
+          syncDock();
+        }
+      }
+    })
+    .catch(() => {});
 }
 
 /** A session that has just been named keeps the draft composed under its placeholder key. */
 export function renameDraft(from: string, to: string): void {
   if (from === to) return;
-  const text = state.drafts[from];
-  if (text !== undefined) {
-    state.drafts[to] = text;
+  cancelDraftTimer(from);
+  const entry = state.drafts[from];
+  if (entry !== undefined) {
+    state.drafts[to] = entry;
     delete state.drafts[from];
+    mirrorDrafts();
+
+    // R6. Rename posts a delete for `from` and a write for `to` (with the same `at`).
+    fetch("/api/draft", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: from, text: "", at: entry.at }),
+    }).catch(() => {});
+
+    fetch("/api/draft", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: to, text: entry.text, at: entry.at }),
+    }).catch(() => {});
   }
   if (draftOwner === from) draftOwner = to;
 }

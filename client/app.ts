@@ -19,6 +19,8 @@
  * wake it, because the redraw may never call it again.
  */
 
+import { loadSnapshot, saveSnapshot } from "./snapshot.ts";
+
 import {
   el,
   collectResults,
@@ -94,11 +96,14 @@ import { groupProtos } from "./protos.ts";
 import {
   NATIVE_FIT,
   addAttachment,
+  cancelDraftTimer,
   draftOwner,
   drawAttachments,
   firstPermitCard,
   fitComposer,
   keepDraft,
+  flushDraft,
+  mirrorDrafts,
   pendingKey,
   pendingPermits,
   permitAt,
@@ -111,6 +116,7 @@ import {
   syncDock,
   undrawnEchoes,
 } from "./composer.ts";
+import { sameBundle, styleHashOf } from "./bundle.ts";
 import { isPoint, pointClass, pointLabel, type TurnFacts } from "./gutter.ts";
 import {
   CHAT_KEY,
@@ -3650,7 +3656,17 @@ async function sendMessage(): Promise<void> {
       return;
     }
     ui.composerText.value = "";
+    cancelDraftTimer(draftOwner);
     delete state.drafts[draftOwner];
+    mirrorDrafts();
+
+    // R6: A successful send POSTs a delete and removes the key from localStorage.
+    fetch("/api/draft", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: draftOwner, text: "", at: Date.now() }),
+    }).catch(() => {});
+
     fitComposer();
     syncDock(); // the draft is gone, so the bar goes back into the flow before the view moves
     state.attachments = [];
@@ -3745,6 +3761,8 @@ async function togglePin(uuid: string, pinned: boolean): Promise<void> {
 // wake/online events short-circuit the wait.
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let reconnectDelay = 1_000;
+let snapshotSaveTimer: ReturnType<typeof setTimeout> | null = null;
+let paintedFromSnapshot = false;
 const RECONNECT_MAX = 15_000;
 
 function scheduleReconnect(): void {
@@ -3775,8 +3793,10 @@ let staleReloadArmed = true;
  */
 async function reloadIfBundleStale(): Promise<void> {
   if (!staleReloadArmed) return;
-  const tag = document.querySelector<HTMLScriptElement>('script[src*="_bun/client/"]');
-  if (tag === null) return; // served unbundled — there is no hash to compare
+  // `mine` is the resolved pathname of the script this page is actually running.
+  // `document.querySelector` with a [src] attribute catches all three Bun path shapes.
+  const tag = document.querySelector<HTMLScriptElement>('script[type="module"][src]');
+  if (tag === null) return; // unbundled page — nothing to compare
   const mine = new URL(tag.src, location.href).pathname;
 
   let html: string;
@@ -3785,18 +3805,15 @@ async function reloadIfBundleStale(): Promise<void> {
     if (!res.ok) return;
     html = await res.text();
   } catch {
-    return;
+    return; // server still coming back up — let the next backoff tick ask again
   }
-  const theirs = /\/_bun\/client\/[A-Za-z0-9._-]+\.js/u.exec(html)?.[0] ?? null;
-  if (theirs === null || theirs === mine) return;
+  if (sameBundle(mine, html)) return;
 
-  staleReloadArmed = false;
-  const draft = document.querySelector<HTMLTextAreaElement>("#composer-text")?.value ?? "";
-  if (draft.trim() !== "") {
-    setStatus("this page is out of date — reload when you have sent that", "error");
-    return;
-  }
+  staleReloadArmed = false; // once-only: a mid-rebuild server must not put the tab in a loop
   setStatus("new version — reloading…");
+  // Flush the draft to the server first so the text in the box survives the reload.
+  // Drafts are persistent; flushDraft() reaches the server, keepDraft() only writes memory.
+  await flushDraft();
   location.reload();
 }
 
@@ -3860,8 +3877,31 @@ function connect(rejoin = false): void {
     setJob("idle");
     drawAll();
   }
+
+  const snapKey = `${sessionStoreKey()}/${state.sessionId}`;
   const wanted = wantedSocketUrl();
   if (wanted === null) return;
+
+  if (!rejoin) {
+    void (async function paintFromSnapshot(key: string) {
+      const snap = await loadSnapshot(key);
+      if (!snap) return;
+      if (state.socket?.url !== wanted || state.messages.length > 0) return;
+
+      state.cwd = snap.cwd;
+      state.messages = snap.messages;
+      state.artifacts = snap.artifacts;
+      state.pins = snap.pins;
+      if (snap.records !== undefined) {
+        state.records = snap.records;
+      }
+      rememberAnchors(pendingKey(), snap.accepts ?? []);
+      drawAll();
+      scrollToEnd();
+      setStatus("restoring…");
+      paintedFromSnapshot = true;
+    })(snapKey);
+  }
 
   // A REJOIN's own socket already reconciles `state.job` on attach — `server/main.ts`'s WS `open`
   // handler sends a fresh `job` frame built from `runner.running(id)` on every reattach, not only
@@ -3882,6 +3922,24 @@ function connect(rejoin = false): void {
     const frame = JSON.parse(String(event.data)) as Frame;
     if (frame.type === "error") {
       setStatus(frame.message, "error");
+      return;
+    }
+    if (frame.type === "draft") {
+      const local = state.drafts[frame.key];
+      const localAt = local ? local.at : 0;
+      if (frame.at > localAt) {
+        if (frame.text.length === 0) delete state.drafts[frame.key];
+        else state.drafts[frame.key] = { text: frame.text, at: frame.at };
+        mirrorDrafts();
+
+        if (draftOwner === frame.key) {
+          ui.composerText.value = frame.text;
+          fitComposer();
+          syncDock();
+          // R5. put the caret at the end
+          ui.composerText.setSelectionRange(frame.text.length, frame.text.length);
+        }
+      }
       return;
     }
     if (frame.type === "recap") {
@@ -3931,7 +3989,7 @@ function connect(rejoin = false): void {
     if (frame.type === "full") {
       reconnectDelay = 1_000; // attached and served — the link is good again
       const unchanged =
-        rejoin &&
+        (rejoin || paintedFromSnapshot) &&
         state.cwd === frame.meta.cwd &&
         sameMessages(state.messages, frame.messages) &&
         state.artifacts.length === frame.artifacts.length;
@@ -3952,16 +4010,44 @@ function connect(rejoin = false): void {
       void restoreRecap(state.sessionId);
 
       if (unchanged) {
+        // A snapshot-painted page reaches this branch with `restoring…` on screen, so set live status.
+        setStatus(`${state.messages.length} msg · live`, "live");
         // Reconnected after backgrounding/sleep, but messages are identical: skip tearing down DOM
         payOwed();
         markSeen();
         holdEnd();
+        paintedFromSnapshot = false;
         return;
       }
+      paintedFromSnapshot = false;
     } else if (frame.type === "append") {
       state.messages = [...state.messages, ...frame.messages];
       state.artifacts = frame.artifacts;
       setStatus(`${state.messages.length} msg · live`, "live");
+    }
+    if (frame.type === "full" || frame.type === "append") {
+      if (snapshotSaveTimer !== null) clearTimeout(snapshotSaveTimer);
+      snapshotSaveTimer = setTimeout(() => {
+        // A snapshot is a convenience and must never compete with drawing.
+        const save = () => {
+          const snap = {
+            at: Date.now(),
+            cwd: state.cwd,
+            messages: state.messages,
+            artifacts: state.artifacts,
+            pins: state.pins,
+            accepts: state.anchors[pendingKey()] ?? [],
+            records: state.records,
+          };
+          void saveSnapshot(snapKey, snap);
+        };
+        if (typeof requestIdleCallback === "function") {
+          requestIdleCallback(save);
+        } else {
+          setTimeout(save, 0);
+        }
+        snapshotSaveTimer = null;
+      }, 1000);
     }
     drawAll();
     // The destination is on screen: everything that was told to wait for it may go now.
@@ -4549,8 +4635,9 @@ function loadView(): void {
 /** Name the bundle on screen, taken from the content hash of the stylesheet it actually loaded. */
 function showBundle(): void {
   const link = document.querySelector<HTMLLinkElement>('link[rel="stylesheet"]');
-  const match = /chunk-([a-z0-9]+)\.css/.exec(link?.href ?? "");
-  ui.build.textContent = match === null ? "" : match[1]?.slice(0, 5) ?? "";
+  // styleHashOf handles both Bun shapes: /chunk-<hash>.css and /_bun/asset/<hash>.css
+  const hash = styleHashOf(link?.href ?? "");
+  ui.build.textContent = hash === null ? "" : hash.slice(0, 5);
 }
 
 async function watchBuild(): Promise<void> {
@@ -4974,6 +5061,16 @@ ui.composerText.addEventListener("keydown", (event) => {
     event.preventDefault();
     void sendMessage();
   }
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") {
+    void flushDraft();
+  }
+});
+
+window.addEventListener("pagehide", () => {
+  void flushDraft();
 });
 
 document.addEventListener("keydown", (event) => {

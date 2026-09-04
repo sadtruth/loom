@@ -141,13 +141,11 @@ export const state = {
   /** Cars being fetched right now — a second click must not start a second fetch. */
   carsLoading: new Set<string>(),
   /**
-   * A draft PER SESSION (scenario 6). `ui.composerText.value` used to be cleared only on send, so a
-   * draft typed in one session silently followed him into the next one and would have been sent
-   * there. Invisible before; with the composer docking under an `unsent` mark (SPEC 199) it becomes
-   * a lie about which session is waiting on him. Keyed the way the queue keys its echoes, so a
-   * session being composed — one that has no id yet — has a key too.
+   * A draft PER SESSION. Drafts live in `localStorage` locally, and are persisted to the server under
+   * `<stateDir>/drafts/<key>.json`. A reload used to lose them, and a second device never saw them;
+   * now they survive a reload and follow the user across devices.
    */
-  drafts: {} as Record<string, string>,
+  drafts: {} as Record<string, { text: string; at: number }>,
   /** The last `/api/bar` answer — the account's own quota reading, never the fitted estimate
    *  (usage-bar, 2026-08-26). Null until the first poll answers. */
   bar: null as BarReading | null,

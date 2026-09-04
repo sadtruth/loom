@@ -451,6 +451,38 @@ async function main(): Promise<void> {
   await Bun.write(target, text);
   console.log(`[fixture] wrote ${target}`);
 
+  // ── a dedicated session for drafts (journey41) ──────────────────────
+  // Every spec that types into composer writes to <stateDir>/drafts/<key>.json and broadcasts over
+  // WebSocket. A dedicated fixture session isolates journey41 from any other spec typing in the suite.
+  const draftsSession = "00000000-fixture-0000-000000000041";
+  const draftsRows = [
+    {
+      type: "user",
+      uuid: "41414141-0000-0000-0000-000000000001",
+      parentUuid: null,
+      timestamp: "2026-08-05T08:00:00.000Z",
+      sessionId: draftsSession,
+      cwd: REAL_DIR,
+      gitBranch: "master",
+      isSidechain: false,
+      message: { role: "user", content: [{ type: "text", text: "drafts fixture opening turn" }] },
+    },
+    {
+      type: "assistant",
+      uuid: "41414141-0000-0000-0000-000000000002",
+      parentUuid: "41414141-0000-0000-0000-000000000001",
+      timestamp: "2026-08-05T08:00:05.000Z",
+      sessionId: draftsSession,
+      isSidechain: false,
+      message: { role: "assistant", content: [{ type: "text", text: "**Ready.** Send something." }] },
+    },
+  ];
+  const draftsTarget = join(dir, `${draftsSession}.jsonl`);
+  await Bun.write(draftsTarget, draftsRows.map((r) => JSON.stringify(r)).join("\n") + "\n");
+  const older = new Date("2026-01-01T00:00:00Z");
+  await utimes(draftsTarget, older, older);
+  console.log(`[fixture] wrote ${draftsTarget}`);
+
   // ── the input-path fixture project ────────────────────────────────
   // Its cwd is the loom root itself — a directory that EXISTS on every machine — because the
   // Runner spawns the (stub) binary with cwd = the project's real cwd, and the stub then derives
@@ -486,7 +518,6 @@ async function main(): Promise<void> {
   await Bun.write(inputTarget, inputRows.map((r) => JSON.stringify(r)).join("\n") + "\n");
   // Backdated so the journey's bare `goto("/")` still lands on ITS project — boot opens the
   // most-recently-active one, and this file would otherwise always be the newest write.
-  const older = new Date("2026-01-01T00:00:00Z");
   await utimes(inputTarget, older, older);
   console.log(`[fixture] wrote ${inputTarget}`);
 

@@ -155,6 +155,7 @@ export interface PendingEcho {
 }
 
 export type Frame =
+  | { type: "draft"; key: string; text: string; at: number }
   | {
       type: "full";
       meta: { cwd: string | null; title: string | null; gitBranch: string | null };
