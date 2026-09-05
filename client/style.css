@@ -703,7 +703,8 @@ button.seam-open:hover { background: var(--bg-sunken); color: var(--ink); }
 }
 .proto-old .n { color: var(--ink-faint); }
 .proto .d { flex: 0 0 auto; font-family: var(--mono); font-size: 10.5px; color: var(--ink-faint); }
-.proto-v {
+.proto-v,
+.proto-origin {
   flex: 0 0 auto;
   font-family: var(--mono);
   font-size: 10px;
@@ -712,6 +713,10 @@ button.seam-open:hover { background: var(--bg-sunken); color: var(--ink); }
   border-radius: 8px;
   padding: 0 6px;
 }
+/* Where the file was FOUND, not which version it is — quieter than the version badge, because at
+   300px the version is what the eye is looking for and the origin is only there to explain a row
+   whose presence is a surprise. */
+.proto-origin { opacity: 0.55; }
 .proto-open {
   flex: 0 0 auto;
   background: none;

@@ -1272,7 +1272,10 @@ function drawDrawer(): void {
       ? JSON.stringify(["t", state.activeRecord, state.recordDoc?.tasks ?? null, drawerShowDone])
       : mode === "protos"
         ? JSON.stringify(["p", state.activeRecord, state.protos])
-        : JSON.stringify(["f", state.activeRecord, state.files, getFolds()]);
+        // `state.artifacts` belongs in here. With no record entered the column is drawn FROM the
+        // session's touches, and leaving them out of the signature meant the first (empty) draw
+        // was the last one: touches streamed in all session and the column never redrew.
+        : JSON.stringify(["f", state.activeRecord, state.files, state.artifacts, getFolds()]);
   if (sig === drawerSig) return;
   drawerSig = sig;
 
@@ -1546,9 +1549,12 @@ function protoRow(
     : [`v${version.version}`, version.change].filter((p) => p !== null).join(" · ");
   row.append(name);
 
-  for (const origin of version.origins || []) {
+  // Origin gets its OWN class. Sharing `proto-v` with the version badge made `.proto-v` mean two
+  // different things on one row, so "which version is this" could no longer be read off the row
+  // — by a person or by a test.
+  for (const origin of version.origins ?? []) {
     const badge = document.createElement("span");
-    badge.className = "proto-v";
+    badge.className = "proto-origin";
     badge.textContent = origin;
     row.append(badge);
   }
@@ -1584,7 +1590,12 @@ function protoRow(
 
 async function loadFiles(path: string): Promise<void> {
   try {
-    const rows = await getJson<FileRow[]>(`/api/files?record=${encodeURIComponent(path)}`);
+    // The route answers `{ rows }`, not a bare array. Reading the envelope AS the array left
+    // `sections()` iterating an object, which draws nothing and throws nothing — the column sat
+    // empty with a 0 badge and no way to tell that from a project with no files. Accept both
+    // shapes so neither half can silently disagree with the other again.
+    const body = await getJson<FileRow[] | { rows: FileRow[] }>(`/api/files?record=${encodeURIComponent(path)}`);
+    const rows = Array.isArray(body) ? body : (body?.rows ?? []);
     if (state.activeRecord !== path) return;
     state.files = { record: path, rows };
     drawDrawer();

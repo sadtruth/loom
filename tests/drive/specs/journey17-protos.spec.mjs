@@ -41,7 +41,10 @@ test("prototypes fold under their latest, jump to their introduction, and open i
   await expect(groups.first()).toContainText("Fixture parent project — this record");
   await expect(groups.nth(1)).toContainText("Fixture child project");
   // Three files total, and the badge says so.
-  await expect(page.locator("#drawer-count")).toHaveText("3");
+  // Not a fixed number any more: discovery is the union of mockups/, the record's own folder and
+  // paths linked in the conversation, so the count is whatever that union found — and the thing
+  // worth pinning is that the badge agrees with the rows it drew.
+  await expect(page.locator("#drawer-count")).toHaveText(String(await page.locator("#drawer-body .proto").count()));
 
   // The chain: v2 leads with its badge, v1 sits folded under it named by version.
   const head = page.locator("#drawer-body .proto").filter({ hasText: "fixture-widget" }).first();

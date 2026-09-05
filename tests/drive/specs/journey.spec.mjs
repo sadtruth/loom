@@ -193,11 +193,26 @@ test("journey: open, read, filter, expand, open a file, pin, document view", asy
   expect(await page.locator("#view-toggles").count(), "and so are the buttons SPEC 252 removed").toBe(0);
   await stayUsable(page, errors, "toggles gone");
 
-  // ── artifacts drawer ────────────────────────────────────────────
-  const artifacts = page.locator("#drawer-body .art");
-  expect(await artifacts.count(), "drawer found touched files").toBeGreaterThan(0);
-  await expect(page.locator("#drawer-body .art.write").first()).toBeVisible();
-  await expect(page.locator("#drawer-body .art.read").first()).toBeVisible();
+  // ── files column ─────────────────────────────────────────────────
+  // Rows carry their BAND now (read | code | data), not the old touch kind, and code and data are
+  // folded away by default — the whole point of the rewrite is that source files stop taking the
+  // column's height. A fixture whose touches are all code therefore renders NO rows and one fold
+  // row, which is correct and used to fail this assertion.
+  const foldRow = page.locator("#drawer-body .drawer-more");
+  const rows = page.locator("#drawer-body .art");
+  const before = await rows.count();
+  expect(await foldRow.count() + before, "the column shows rows, a fold, or both").toBeGreaterThan(0);
+
+  // The counter counts what is RENDERED. This is the invariant the old counter broke by taking its
+  // number from a different list than the one it drew ("says 1 and when i click it shows 0 files").
+  await expect(page.locator("#drawer-count")).toHaveText(String(before));
+
+  // Unfolding hands the hidden files back, and the counter moves with them.
+  if (await foldRow.count() > 0) {
+    await foldRow.first().click();
+    await expect(rows).not.toHaveCount(before);
+    await expect(page.locator("#drawer-count")).toHaveText(String(await rows.count()));
+  }
   await stayUsable(page, errors, "drawer");
 
   // ── folded runs ─────────────────────────────────────────────────
@@ -331,8 +346,10 @@ test("journey: open, read, filter, expand, open a file, pin, document view", asy
   await expect(page.locator("#chat-area")).toBeVisible();
   await stayUsable(page, errors, "pane closed");
 
-  // Clicking a drawer row opens the pane too.
-  await artifacts.first().click();
+  // Clicking a drawer row opens the pane too. Code and data sit behind a fold now, so open it
+  // first when that is where every row is — otherwise there is nothing on screen to click.
+  if (await rows.count() === 0) await foldRow.first().click();
+  await rows.first().click();
   await expect(page.locator("#file")).toBeVisible();
   await page.keyboard.press("Escape");
   await stayUsable(page, errors, "chips");
