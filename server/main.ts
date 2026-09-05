@@ -20,7 +20,7 @@ import { aggregate, type Message, type Touch } from "./transcript.ts";
 import { readPins, setPin, type PinMap } from "./pins.ts";
 import { addAccept, readAccepts, type Accept } from "./accepts.ts";
 import { openPath } from "./open.ts";
-import { MAX_BYTES, truncateUtf8, guardFrom, kindOf, listDir, locate, looksBinary, resolveWiki, wikiScope, contentDisposition } from "./files.ts";
+import { MAX_BYTES, truncateUtf8, guardFrom, kindOf, listDir, locate, looksBinary, resolveWiki, wikiScope, contentDisposition, writableFile } from "./files.ts";
 import { stat } from "node:fs/promises";
 import { readFileSync, type Stats } from "node:fs";
 import { PermitBroker, type Permit, type Verdict } from "./permits.ts";
@@ -1399,7 +1399,8 @@ const server = Bun.serve<SocketData, Routes>({
       return json({ rows });
     },
 
-    "/api/file": async (req) => {
+    "/api/file": {
+      GET: async (req) => {
       const denied = requireAuth(req);
       if (denied !== null) return denied;
       const params = new URL(req.url).searchParams;
@@ -1482,13 +1483,66 @@ const server = Bun.serve<SocketData, Routes>({
         kind = "download";
       }
 
+      // The server re-hashes the file on disk and answers 409 with the current content if they differ.
+      const text = kind === "download" ? "" : new TextDecoder().decode(bytes);
+      const hasher = new Bun.CryptoHasher("sha256");
+      hasher.update(rawBytes);
+      const sha = hasher.digest("hex");
+
+      const isWritable = await writableFile(GUARD, verdict.path);
+
       return json({
         path: verdict.path,
         kind,
         bytes: file.size,
-        text: kind === "download" ? "" : new TextDecoder().decode(bytes),
+        text,
+        sha,
+        writable: isWritable.ok,
         truncated: truncated && kind !== "download" ? true : undefined
       });
+    },
+
+      PUT: async (req) => {
+        const denied = requireAuth(req);
+        if (denied !== null) return denied;
+
+        try {
+          const body = await req.json();
+          if (typeof body.path !== "string" || typeof body.text !== "string" || typeof body.sha !== "string") {
+            return json({ error: "bad request: missing path, text, or sha" }, 400);
+          }
+          if (new TextEncoder().encode(body.text).length > 5 * 1024 * 1024) {
+            return json({ error: "body too large (max 5 MB)" }, 413);
+          }
+
+          const decision = await writableFile(GUARD, body.path);
+          if (!decision.ok) {
+            return json({ error: decision.reason }, 403);
+          }
+
+          const file = Bun.file(decision.path);
+          const currentBytes = await file.arrayBuffer();
+          const hasher = new Bun.CryptoHasher("sha256");
+          hasher.update(currentBytes);
+          const currentSha = hasher.digest("hex");
+
+          if (currentSha !== body.sha) {
+            const currentText = new TextDecoder().decode(currentBytes);
+            return json({ error: "conflict: file modified on disk", text: currentText, sha: currentSha }, 409);
+          }
+
+          // writeAtomic writes to path + .loom-tmp and renames it over the original path.
+          await writeAtomic(decision.path, body.text);
+
+          const newHasher = new Bun.CryptoHasher("sha256");
+          newHasher.update(body.text);
+          const newSha = newHasher.digest("hex");
+
+          return json({ ok: true, sha: newSha });
+        } catch (error) {
+          return json({ error: "bad request" }, 400);
+        }
+      },
     },
 
     "/api/models": {
