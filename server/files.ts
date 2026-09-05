@@ -435,3 +435,28 @@ export function truncateUtf8(bytes: Uint8Array, max: number): Uint8Array {
   }
   return bytes.slice(0, max);
 }
+
+/**
+ * Builds the content-disposition header for downloading a file, emitting BOTH forms:
+ * an ASCII-folded filename="..." and an RFC 5987 filename*=UTF-8''...
+ */
+export function contentDisposition(name: string): string {
+  // Strip control characters (including CR, LF) for safety in headers.
+  const cleanName = name.replace(/[\x00-\x1F\x7F]/g, "");
+
+  // RFC 5987 encode logic. We use encodeURIComponent and then fix some characters.
+  const rfc5987 = encodeURIComponent(cleanName)
+    // Note: encodeURIComponent encodes spaces to %20, which is correct for RFC 5987.
+    // It doesn't encode !'()* so we manually encode them for full compliance, though not strictly required.
+    .replace(/['()]/g, escape)
+    .replace(/\*/g, "%2A");
+
+  // ASCII-folded fallback for older clients.
+  // We'll replace non-ASCII with '?'.
+  const ascii = cleanName.replace(/[^\x20-\x7E]/g, "?");
+
+  // Escape quotes and backslashes in the quoted string
+  const quoted = ascii.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+
+  return `attachment; filename="${quoted}"; filename*=UTF-8''${rfc5987}`;
+}

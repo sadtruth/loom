@@ -20,7 +20,7 @@ import { aggregate, type Message, type Touch } from "./transcript.ts";
 import { readPins, setPin, type PinMap } from "./pins.ts";
 import { addAccept, readAccepts, type Accept } from "./accepts.ts";
 import { openPath } from "./open.ts";
-import { MAX_BYTES, truncateUtf8, guardFrom, kindOf, listDir, locate, looksBinary, resolveWiki, wikiScope } from "./files.ts";
+import { MAX_BYTES, truncateUtf8, guardFrom, kindOf, listDir, locate, looksBinary, resolveWiki, wikiScope, contentDisposition } from "./files.ts";
 import { stat } from "node:fs/promises";
 import { readFileSync, type Stats } from "node:fs";
 import { PermitBroker, type Permit, type Verdict } from "./permits.ts";
@@ -1457,12 +1457,14 @@ const server = Bun.serve<SocketData, Routes>({
           contentType = file.type;
         }
 
-        return new Response(file, {
-          headers: {
-            "content-type": contentType,
-            "content-security-policy": "sandbox allow-scripts",
-          },
-        });
+        const headers: Record<string, string> = {
+          "content-type": contentType,
+          "content-security-policy": "sandbox allow-scripts",
+        };
+        if (new URL(req.url).searchParams.get("download") === "1") {
+          headers["content-disposition"] = contentDisposition(verdict.path.split("/").slice(-1)[0] ?? verdict.path);
+        }
+        return new Response(file, { headers });
       }
 
       if (kind === "image") return new Response(file);
