@@ -17,6 +17,7 @@ import { highlightLines, languageOf } from "./highlight.ts";
 import type { BlockContext } from "./blocks.ts";
 import { embedPage } from "./embed.ts";
 
+
 interface FileResponse {
   path: string;
   kind: "markdown" | "text" | "dir" | "page" | "pdf" | "download";
@@ -44,6 +45,9 @@ function base(path: string): string {
 
 /** The path currently in the pane, so a second click on the same row is a no-op rather than a flash. */
 let current: string | null = null;
+let currentText: string | null = null;
+let currentQuery: string | null = null;
+let currentKind: string | null = null;
 
 /**
  * What loom may read, and where it is running — for the refusal below, which is the one place a
@@ -88,8 +92,15 @@ export function openPath(): string | null {
   return current;
 }
 
+export function getFilePaneState(): { path: string | null; query: string | null; text: string | null; kind: string | null } {
+  return { path: current, query: currentQuery, text: currentText, kind: currentKind };
+}
+
 export function closePane(handles: PaneHandles): void {
   current = null;
+  currentText = null;
+  currentQuery = null;
+  currentKind = null;
   handles.layout.classList.remove("file-open");
   // The head is a child of the scroller now, so clearing the body would throw it away.
   handles.body.replaceChildren(handles.head);
@@ -131,15 +142,26 @@ export async function showFile(
     textContent: "loading…",
   }));
 
-  const query = wiki !== null
+  currentQuery = wiki !== null
     ? `wiki=${encodeURIComponent(wiki)}`
     : `path=${encodeURIComponent(path)}${from === undefined ? "" : `&base=${encodeURIComponent(from)}`}` +
       `${record === undefined ? "" : `&record=${encodeURIComponent(record)}`}`;
 
   if (IMAGE.test(path)) {
+    currentKind = "image";
+    const copyBtn = document.getElementById("file-copy");
+    const copyImgBtn = document.getElementById("file-copy-image");
+    if (copyBtn) copyBtn.hidden = true;
+    if (copyImgBtn) {
+      if (window.ClipboardItem !== undefined) {
+        copyImgBtn.hidden = false;
+      } else {
+        copyImgBtn.hidden = true;
+      }
+    }
     const img = document.createElement("img");
     img.className = "file-image zoomable";
-    img.src = `/api/file?${query}`;
+    img.src = `/api/file?${currentQuery}`;
     img.alt = path;
     show(handles, img);
     return;
@@ -147,7 +169,7 @@ export async function showFile(
 
   let response: Response;
   try {
-    response = await fetch(`/api/file?${query}`);
+    response = await fetch(`/api/file?${currentQuery}`);
   } catch (error) {
     show(handles, note(`could not read: ${String(error)}`));
     return;
@@ -158,6 +180,10 @@ export async function showFile(
   }
 
   const file = (await response.json()) as FileResponse;
+  if (current === path) {
+    currentText = file.text;
+    currentKind = file.kind;
+  }
   if (current !== path) return; // a faster second click won the race
 
   // The server answers with the path it actually resolved, which for a relative chip is not the one
@@ -172,6 +198,10 @@ export async function showFile(
   // A directory is a list of chips, so opening one composes with everything else: each row is the
   // same chip the transcript renders, and clicking it walks down (or back up) without leaving loom.
   if (file.kind === "dir") {
+    const copyBtn = document.getElementById("file-copy");
+    const copyImgBtn = document.getElementById("file-copy-image");
+    if (copyBtn) copyBtn.hidden = true;
+    if (copyImgBtn) copyImgBtn.hidden = true;
     const list = document.createElement("div");
     list.className = "file-dir";
     const parent = shown.replace(/\/+$/u, "").replace(/\/[^/]*$/u, "");
@@ -194,21 +224,29 @@ export async function showFile(
     return;
   }
 
+
   // An `.html` file is a PAGE, not a listing of its own markup (item 10). `embedPage` is the same
   // sandboxed frame a plan block's prototype uses — it grows to the document's own height and
   // carries the way out to a tab under it — so the pane and the plan cannot drift apart. User,
   // 2026-08-24: *"i dont really need to see the source of prototype … maybe even never"*, so there
   // is no switch: the source is reachable the way any other file's is, through the editor.
 
+  const copyBtn = document.getElementById("file-copy");
+  const copyImgBtn = document.getElementById("file-copy-image");
+  if (copyBtn) copyBtn.hidden = false;
+  if (copyImgBtn) copyImgBtn.hidden = true;
+
   if (file.kind === "pdf") {
+    if (copyBtn) copyBtn.hidden = true;
     const frame = document.createElement("iframe");
     frame.className = "file-embed";
-    frame.src = `/api/file?${query}&raw=1`;
+    frame.src = `/api/file?${currentQuery}&raw=1`;
     show(handles, frame);
     return;
   }
 
   if (file.kind === "download") {
+    if (copyBtn) copyBtn.hidden = true;
     const box = document.createElement("div");
     box.className = "file-note file-download";
     box.append(Object.assign(document.createElement("p"), { textContent: `${base(shown)} (${readableBytes(file.bytes)})` }));
@@ -217,12 +255,12 @@ export async function showFile(
     actions.className = "file-roots";
 
     const rawLink = document.createElement("a");
-    rawLink.href = `/api/file?${query}&raw=1`;
+    rawLink.href = `/api/file?${currentQuery}&raw=1`;
     rawLink.target = "_blank";
     rawLink.textContent = "open raw in tab";
 
     const dlLink = document.createElement("a");
-    dlLink.href = `/api/file?${query}&raw=1`;
+    dlLink.href = `/api/file?${currentQuery}&raw=1&download=1`;
     dlLink.download = base(shown);
     dlLink.textContent = "download";
 
@@ -244,7 +282,7 @@ export async function showFile(
     const truncNote = note("");
     truncNote.textContent = `showing the first 2 MB of ${readableBytes(file.bytes)} — `;
     const rawLink = document.createElement("a");
-    rawLink.href = `/api/file?${query}&raw=1`;
+    rawLink.href = `/api/file?${currentQuery}&raw=1`;
     rawLink.target = "_blank";
     rawLink.textContent = "open raw";
     truncNote.append(rawLink);

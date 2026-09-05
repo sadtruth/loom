@@ -72,6 +72,7 @@ import { statusClass } from "./chips.ts";
 import { labelChips, renderMarkdown } from "./markdown.ts";
 import {
   closePane,
+  getFilePaneState,
   openPath as panePath,
   setEnvironment as setPaneEnvironment,
   showFile,
@@ -140,6 +141,7 @@ import {
   withCore,
 } from "./opens.ts";
 import { wireTouchGestures } from "./touch.ts";
+import { copyText } from "./clipboard.ts";
 
 import type {
   ProtoGroup,
@@ -4856,6 +4858,37 @@ function closeFileCentre(): void {
 }
 
 need<HTMLElement>("file-close").addEventListener("click", () => closeFileCentre());
+need<HTMLElement>("file-copy").addEventListener("click", () => {
+  const state = getFilePaneState();
+  if (state.text !== null) {
+    void copyText(state.text, state.path ? state.path.split("/").pop() : "file");
+  }
+});
+need<HTMLElement>("file-copy-image").addEventListener("click", async () => {
+  const state = getFilePaneState();
+  if (state.kind === "image" && state.query !== null) {
+    try {
+      const res = await fetch(`/api/file?${state.query}&raw=1`);
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      const blob = await res.blob();
+      await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+      toast("copied image");
+    } catch (e) {
+      toast(`could not copy image: ${String(e)}`, true);
+    }
+  }
+});
+need<HTMLElement>("file-download").addEventListener("click", () => {
+  const state = getFilePaneState();
+  if (state.query !== null) {
+    const jump = document.createElement("a");
+    jump.href = `/api/file?${state.query}&raw=1&download=1`;
+    jump.download = state.path ? state.path.split("/").pop()! : "download";
+    document.body.append(jump);
+    jump.click();
+    jump.remove();
+  }
+});
 need<HTMLElement>("file-open").addEventListener("click", () => {
   const path = panePath();
   if (path !== null) void handOff(path);
