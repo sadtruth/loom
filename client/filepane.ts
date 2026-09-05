@@ -23,8 +23,24 @@ interface FileResponse {
   truncated?: boolean;
   bytes: number;
   text: string;
+  sha?: string;
+  writable?: boolean;
   /** Present for `kind: "dir"` — one row per entry, directories first (SPEC 141). */
   entries?: Array<{ name: string; dir: boolean; bytes: number }>;
+}
+
+export function spliceBlock(source: string, fromLine: number, toLine: number, replacement: string): string {
+  const lines = source.split("\n");
+  // The line numbers passed in are 1-based.
+  // The block to be replaced spans from index (fromLine - 1) to (toLine - 1) inclusive.
+  const before = lines.slice(0, fromLine - 1);
+  const after = lines.slice(toLine);
+
+  // Splitting replacement into lines allows us to insert it directly into the array structure.
+  // If replacement has a trailing newline, its last element will be "".
+  // By inserting exactly what replacement splits into, and taking what was before and after,
+  // we maintain the exact text shape and `join("\n")` recreates the string perfectly.
+  return [...before, ...replacement.split("\n"), ...after].join("\n");
 }
 
 export interface PaneHandles {
@@ -44,6 +60,8 @@ function base(path: string): string {
 
 /** The path currently in the pane, so a second click on the same row is a no-op rather than a flash. */
 let current: string | null = null;
+let currentSha: string | null = null;
+let currentText: string | null = null;
 
 /**
  * What loom may read, and where it is running — for the refusal below, which is the one place a
@@ -165,9 +183,15 @@ export async function showFile(
   // otherwise "↑ up" from a relative chip would climb a path that does not exist (SPEC 143).
   const shown = file.path.length > 0 ? file.path : path;
   current = shown;
+  currentSha = file.sha ?? null;
+  currentText = file.text;
   handles.title.textContent = base(shown);
   handles.path.textContent = shown;
   handles.path.dataset["path"] = shown;
+
+  // Clear any existing edit controls
+  const existingEdit = handles.head.querySelector(".file-edit-controls");
+  if (existingEdit) existingEdit.remove();
 
   // A directory is a list of chips, so opening one composes with everything else: each row is the
   // same chip the transcript renders, and clicking it walks down (or back up) without leaving loom.
@@ -257,6 +281,172 @@ export async function showFile(
     // `lines: true` — the rendered blocks carry the source line they start at, so a `:86` chip can
     // land inside a record instead of reporting that the file has no such line (item 13).
     article.append(renderMarkdown(file.text, ctx, { lines: true }));
+
+    if (file.writable) {
+      const editControls = document.createElement("div");
+      editControls.className = "file-edit-controls";
+      editControls.style.display = "inline-block";
+      editControls.style.marginLeft = "12px";
+
+      const editBtn = document.createElement("button");
+      editBtn.textContent = "Edit";
+      editBtn.className = "mini";
+      editControls.append(editBtn);
+
+      handles.title.after(editControls);
+
+      editBtn.addEventListener("click", () => {
+         const editor = document.createElement("textarea");
+         editor.className = "file-editor";
+         editor.value = currentText ?? "";
+         editor.style.width = "100%";
+         editor.style.minHeight = "400px";
+         editor.style.fontFamily = "monospace";
+         editor.style.padding = "12px";
+
+         const saveControls = document.createElement("div");
+         saveControls.className = "file-save-controls";
+         saveControls.style.marginBottom = "12px";
+
+         const saveBtn = document.createElement("button");
+         saveBtn.textContent = "Save";
+         const cancelBtn = document.createElement("button");
+         cancelBtn.textContent = "Cancel";
+
+         saveControls.append(saveBtn, " ", cancelBtn);
+
+         const form = document.createElement("div");
+         form.append(saveControls, editor);
+
+         const reset = () => {
+           if (container) {
+             container.replaceChildren(article);
+           } else {
+             show(handles, article);
+           }
+         };
+
+         const save = async () => {
+           const newText = editor.value;
+           const res = await fetch("/api/file/edit", {
+             method: "PUT",
+             headers: { "Content-Type": "application/json" },
+             body: JSON.stringify({ path: shown, text: newText, sha: currentSha })
+           });
+           if (!res.ok) {
+             const err = await res.json() as any;
+             alert(`Save failed: ${err.error || res.statusText}`);
+             return;
+           }
+           // success, re-fetch to update properly
+           void showFile(handles, shown, ctx, place, from, record);
+         };
+
+         saveBtn.addEventListener("click", save);
+         cancelBtn.addEventListener("click", reset);
+         editor.addEventListener("keydown", (e) => {
+           if (e.key === "Escape") reset();
+           if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+             e.preventDefault();
+             void save();
+           }
+         });
+
+         if (container) {
+            container.replaceChildren(form);
+         } else {
+            show(handles, form);
+         }
+         editor.focus();
+      });
+
+      // Block-level editing
+      article.addEventListener("click", (e) => {
+         // Only if clicking directly on a block element, not on a link or something inside
+         if (e.target instanceof Element && e.target.hasAttribute("data-line")) {
+           const target = e.target as HTMLElement;
+           // If they are highlighting text we shouldn't steal the click
+           const selection = window.getSelection();
+           if (selection && selection.toString().length > 0) return;
+
+           const startLine = parseInt(target.getAttribute("data-line")!, 10);
+           if (isNaN(startLine)) return;
+
+           // find the next block's line, or end of file
+           let nextLine = Infinity;
+           let curr: Element | null = target.nextElementSibling;
+           while (curr) {
+             if (curr.hasAttribute("data-line")) {
+               nextLine = parseInt(curr.getAttribute("data-line")!, 10);
+               break;
+             }
+             curr = curr.nextElementSibling;
+           }
+
+           const lines = (currentText ?? "").split("\n");
+           const endLine = nextLine !== Infinity ? nextLine - 1 : lines.length;
+
+           // the block's text
+           let blockText = lines.slice(startLine - 1, endLine).join("\n");
+           // if this block was replacing the end of file and it didn't have a trailing \n initially we do nothing,
+           // but spliceBlock handles exact line numbers properly.
+
+           const editor = document.createElement("textarea");
+           editor.className = "file-block-editor";
+           editor.value = blockText;
+           editor.style.width = "100%";
+           editor.style.fontFamily = "monospace";
+           editor.style.padding = "8px";
+
+           // Resize somewhat appropriately
+           const rows = Math.max(3, endLine - startLine + 1);
+           editor.rows = rows;
+
+           const reset = () => {
+             target.style.display = "";
+             editor.remove();
+           };
+
+           let isSaving = false;
+
+           const save = async () => {
+             if (isSaving) return;
+             isSaving = true;
+             const newBlockText = editor.value;
+             const newFileText = spliceBlock(currentText ?? "", startLine, endLine, newBlockText);
+             const res = await fetch("/api/file/edit", {
+               method: "PUT",
+               headers: { "Content-Type": "application/json" },
+               body: JSON.stringify({ path: shown, text: newFileText, sha: currentSha })
+             });
+             isSaving = false;
+             if (!res.ok) {
+               const err = await res.json() as any;
+               alert(`Save failed: ${err.error || res.statusText}`);
+               return;
+             }
+             // success, re-fetch whole file
+             void showFile(handles, shown, ctx, place, from, record);
+           };
+
+           editor.addEventListener("keydown", (ev) => {
+             if (ev.key === "Escape") reset();
+             if ((ev.ctrlKey || ev.metaKey) && ev.key === "s") {
+               ev.preventDefault();
+               void save();
+             }
+           });
+           editor.addEventListener("blur", () => {
+             // on blur, we do not auto-save to avoid accidents, we just reset or they can use cmd-s
+             reset();
+           });
+
+           target.style.display = "none";
+           target.after(editor);
+           editor.focus();
+         }
+      });
+    }
 
     if (container) {
       container.append(article);

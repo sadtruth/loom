@@ -236,6 +236,45 @@ export function expandHome(raw: string): string {
  * `resolve()` collapses `..` before the root check, which is what makes traversal strings
  * (`/vault/../../etc/passwd`) fail the containment test rather than sneak through it.
  */
+const WRITABLE_DENY_SEGMENTS = new Set(["Diary", "Archive", ".git"]);
+const WRITABLE_EXT = /\.(md|markdown|txt)$/i;
+
+export function writable(guard: Guard, raw: string): Decision {
+  const base = decide(guard, raw);
+  if (!base.ok) return base;
+
+  const segments = base.path.split(sep);
+  if (segments.some(s => WRITABLE_DENY_SEGMENTS.has(s))) {
+    return { ok: false, status: 403, reason: "read-only location" };
+  }
+
+  // Also check Garden/Sources/Highlights/ matched on path segments
+  for (let i = 0; i < segments.length - 2; i++) {
+    if (segments[i] === "Garden" && segments[i+1] === "Sources" && segments[i+2] === "Highlights") {
+      return { ok: false, status: 403, reason: "read-only location" };
+    }
+  }
+
+  const name = segments[segments.length - 1] ?? "";
+  if (!WRITABLE_EXT.test(name)) {
+    return { ok: false, status: 403, reason: "read-only file type" };
+  }
+
+  return base;
+}
+
+export async function writableFile(guard: Guard, raw: string): Promise<Decision> {
+  const first = writable(guard, raw);
+  if (!first.ok) return first;
+  let real: string;
+  try {
+    real = await realpath(first.path);
+  } catch {
+    return { ok: false, status: 400, reason: "not found" };
+  }
+  return writable(guard, real);
+}
+
 export function decide(guard: Guard, raw: string): Decision {
   const expanded = expandHome(raw);
   if (expanded.length === 0 || !isAbsolute(expanded)) {
