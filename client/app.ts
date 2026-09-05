@@ -171,6 +171,8 @@ import {
   reconcileJobFromServer,
   setJob,
 } from "./working.ts";
+import { copyText } from "./clipboard.ts";
+import { loomFileUrl } from "./paths.ts";
 import {
   AGED_MS,
   buildBarTooltip,
@@ -1534,6 +1536,7 @@ function protoRow(
   const row = document.createElement("div");
   row.className = options.head ? "proto" : "proto proto-old";
   row.title = `${version.name} — jump to where it entered the conversation`;
+  row.dataset["path"] = version.path; // Make path available
 
   const name = document.createElement("span");
   name.className = "n";
@@ -2187,33 +2190,43 @@ function closeTreeMenu(): void {
 }
 document.addEventListener("click", closeTreeMenu);
 
-/** The row's context menu: the writes (+ subproject, rename) above, the utilities below. */
-function openTreeMenu(x: number, y: number, record: RecordInfo, depth: number): void {
+/** Reusable context menu for files and paths. */
+export function openContextMenu(x: number, y: number, entries: { label: string; act: () => void }[]): void {
   closeTreeMenu();
   const menu = document.createElement("div");
   menu.className = "tree-menu";
-  const entry = (text: string, act: () => void): void => {
+  for (const { label, act } of entries) {
+    if (label === "---") {
+      const sep = document.createElement("div");
+      sep.className = "sep";
+      menu.append(sep);
+      continue;
+    }
     const item = document.createElement("button");
     item.type = "button";
-    item.textContent = text;
+    item.textContent = label;
     item.addEventListener("click", (event) => {
       event.stopPropagation();
       closeTreeMenu();
       act();
     });
     menu.append(item);
-  };
-  entry("+ subproject", () => openCreateInput(record.path, depth + 1));
-  entry("rename", () => openRenameInput(record, depth));
-  const sep = document.createElement("div");
-  sep.className = "sep";
-  menu.append(sep);
-  entry("copy link", () => copyRecordLink(record.path));
+  }
   document.body.append(menu);
   const rect = menu.getBoundingClientRect();
   menu.style.left = `${Math.min(x, window.innerWidth - rect.width - 8)}px`;
   menu.style.top = `${Math.min(y, window.innerHeight - rect.height - 8)}px`;
   treeMenu = menu;
+}
+
+/** The row's context menu: the writes (+ subproject, rename) above, the utilities below. */
+function openTreeMenu(x: number, y: number, record: RecordInfo, depth: number): void {
+  openContextMenu(x, y, [
+    { label: "+ subproject", act: () => openCreateInput(record.path, depth + 1) },
+    { label: "rename", act: () => openRenameInput(record, depth) },
+    { label: "---", act: () => {} },
+    { label: "copy link", act: () => copyRecordLink(record.path) },
+  ]);
 }
 
 /**
@@ -2392,23 +2405,7 @@ function wireTitleRename(heading: HTMLHeadingElement, path: string): void {
 
 /** The absolute record path — the form that opens in loom when pasted into a chat. */
 function copyRecordLink(path: string): void {
-  const fallback = (): void => {
-    const scratch = document.createElement("textarea");
-    scratch.value = path;
-    document.body.append(scratch);
-    scratch.select();
-    document.execCommand("copy");
-    scratch.remove();
-    toast("link copied");
-  };
-  if (navigator.clipboard === undefined) {
-    fallback();
-    return;
-  }
-  navigator.clipboard.writeText(path).then(
-    () => toast("link copied"),
-    () => fallback(),
-  );
+  void copyText(path, "link");
 }
 
 
@@ -3855,7 +3852,7 @@ async function sendMessage(): Promise<void> {
 // ── actions ─────────────────────────────────────────────────────────
 
 /** Hand the path to Obsidian or the file manager — now an explicit choice, not the default. */
-async function handOff(path: string): Promise<void> {
+export async function handOff(path: string): Promise<void> {
   try {
     const result = await (
       await fetch("/api/open", {
@@ -4863,8 +4860,97 @@ need<HTMLElement>("file-open").addEventListener("click", () => {
 ui.filePath.addEventListener("click", () => {
   const path = panePath();
   if (path === null) return;
-  void navigator.clipboard.writeText(path).then(() => toast("path copied"), () => toast("copy failed", true));
+  void copyText(path, "path");
 });
+ui.filePath.addEventListener("contextmenu", (event) => {
+  const path = panePath();
+  if (path === null) return;
+  event.preventDefault();
+  const abs = absolutise(path);
+  handlePathContextMenu(event.clientX, event.clientY, abs);
+});
+ui.filePath.addEventListener("touchstart", (event) => {
+  const path = panePath();
+  if (path === null) return;
+  const touch = event.touches[0];
+  if (touch === undefined) return;
+  pathPress = setTimeout(() => {
+    suppressClick = true;
+    handlePathContextMenu(touch.clientX, touch.clientY, absolutise(path));
+  }, 450);
+}, { passive: true });
+
+function handlePathContextMenu(x: number, y: number, targetPath: string): void {
+  const abs = absolutise(targetPath);
+  const url = loomFileUrl(location.origin, abs);
+
+  const inPane = state.opens.selected !== null && selectedOpen(state.opens).kind === "file" && panePath() === abs;
+
+  openContextMenu(x, y, [
+    { label: "copy path", act: () => void copyText(abs, "path") },
+    { label: "copy loom link", act: () => void copyText(url, "link") },
+    { label: "open in Obsidian / file manager", act: () => void handOff(abs) },
+    ...(inPane ? [] : [{ label: "open in loom", act: () => openInPane(abs) }]),
+  ]);
+}
+
+let pathPress: ReturnType<typeof setTimeout> | null = null;
+let suppressClick = false;
+
+document.addEventListener("contextmenu", (event) => {
+  const target = event.target;
+  if (!(target instanceof Element)) return;
+
+  const chip = target.closest<HTMLElement>(".chip");
+  const art = target.closest<HTMLElement>(".art");
+  const proto = target.closest<HTMLElement>(".proto");
+
+  let targetPath = "";
+  if (chip !== null && chip.dataset["path"] !== undefined) {
+    targetPath = chip.dataset["path"];
+  } else if (art !== null && art.dataset["path"] !== undefined) {
+    targetPath = art.dataset["path"];
+  } else if (proto !== null && proto.dataset["path"] !== undefined) {
+    targetPath = proto.dataset["path"];
+  }
+  if (targetPath !== "") {
+    event.preventDefault();
+    handlePathContextMenu(event.clientX, event.clientY, targetPath);
+  }
+});
+
+document.addEventListener("touchstart", (event) => {
+  const target = event.target;
+  if (!(target instanceof Element)) return;
+
+  const chip = target.closest<HTMLElement>(".chip");
+  const art = target.closest<HTMLElement>(".art");
+  const proto = target.closest<HTMLElement>(".proto");
+
+  let targetPath = "";
+  if (chip !== null && chip.dataset["path"] !== undefined) {
+    targetPath = chip.dataset["path"];
+  } else if (art !== null && art.dataset["path"] !== undefined) {
+    targetPath = art.dataset["path"];
+  } else if (proto !== null && proto.dataset["path"] !== undefined) {
+    targetPath = proto.dataset["path"];
+  }
+  if (targetPath !== "") {
+    const touch = event.touches[0];
+    if (touch === undefined) return;
+    const { clientX, clientY } = touch;
+    pathPress = setTimeout(() => {
+      suppressClick = true;
+      handlePathContextMenu(clientX, clientY, targetPath);
+    }, 450);
+  }
+}, { passive: true });
+
+for (const type of ["touchend", "touchmove", "touchcancel"]) {
+  document.addEventListener(type, () => {
+    if (pathPress !== null) clearTimeout(pathPress);
+  });
+}
 
 // Below 900px the column is an overlay rather than a column (SPEC 188), so the same two controls
 // carry a second job: `drawer-open` slides it in, and the handle is never hidden down there because
@@ -4940,6 +5026,13 @@ if ("serviceWorker" in navigator) void navigator.serviceWorker.register("/sw.js"
 
 // One delegated listener for every chip and drawer row — they are re-created on each redraw.
 document.addEventListener("click", (event) => {
+  if (suppressClick) {
+    event.preventDefault();
+    event.stopPropagation();
+    suppressClick = false;
+    return;
+  }
+
   const target = event.target;
   if (!(target instanceof Element)) return;
 
