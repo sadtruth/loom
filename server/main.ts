@@ -57,6 +57,9 @@ import { readBarReading } from "./bar.ts";
 import { readCurrentBudgets } from "./budgets.ts";
 import { buildState } from "./build-state.ts";
 import { assembleTrainFor, storeKeyOf, type Train } from "./train.ts";
+import { mergeOrigins, walkRecordDirectory, setFilePin, readFilePins, type OriginInput } from "./fileindex.ts";
+import { extractPaths } from "../client/paths.ts";
+import { parseTranscript } from "./transcript.ts";
 import {
   claimWarm,
   dismiss,
@@ -486,6 +489,8 @@ type Routes =
   | "/api/projects/:key/sessions/:id/pins"
   | "/api/pin"
   | "/api/file"
+  | "/api/files"
+  | "/api/files/pin"
   | "/api/interrupt"
   | "/api/open"
   | "/api/models"
@@ -1303,6 +1308,97 @@ const server = Bun.serve<SocketData, Routes>({
     // points here); everything readable comes back as JSON for the file pane. Every path goes
     // through the guard first — see server/files.ts for why an unbounded reader is not acceptable
     // on this port.
+    "/api/files/pin": {
+      POST: async (req) => {
+        const denied = requireAuth(req);
+        if (denied !== null) return denied;
+
+        try {
+          const body = (await req.json()) as { record?: unknown; path?: unknown; on?: unknown };
+          if (typeof body.record !== "string" || typeof body.path !== "string" || typeof body.on !== "boolean") {
+            return json({ error: "bad request" }, 400);
+          }
+
+          const record = await knownRecord(body.record);
+          if (record === null) return json({ error: "no such project record" }, 404);
+
+          await setFilePin(STATE_DIR, record.path, body.path, body.on, new Date().toISOString());
+          return json({ ok: true });
+        } catch {
+          return json({ error: "bad request" }, 400);
+        }
+      },
+    },
+
+    "/api/files": async (req) => {
+      const denied = requireAuth(req);
+      if (denied !== null) return denied;
+
+      const recordPath = new URL(req.url).searchParams.get("record");
+      if (recordPath === null) return json({ error: "record required" }, 400);
+
+      const record = await knownRecord(recordPath);
+      if (record === null) return json({ error: "no such project record" }, 404);
+
+      const inputs: OriginInput[] = [];
+
+      // 1. record origin
+      const recordDir = dirname(record.path);
+      const recordInputs = await walkRecordDirectory(recordDir);
+      for (const input of recordInputs) {
+        inputs.push(input);
+      }
+
+      // 2. train touches & 3. linked paths
+      const linked = new Set(sessionsOf(record.path, await readLinks(LINKS_DIR)));
+      const cars = await assembleTrainFor(
+        join(ROOT, storeKeyOf(cwdFor(record.path))),
+        join(ROOT, storeKeyOf(cwdFor(record.path))),
+        linked,
+        join(AGY_ROOT, storeKeyOf(cwdFor(record.path))),
+        join(AGY_ROOT, storeKeyOf(cwdFor(record.path))),
+      );
+
+      const knownDirs: string[] = [recordDir];
+
+      for (const car of cars) {
+        try {
+          const text = await Bun.file(car.file).text();
+          const model = parseTranscript(text);
+
+          // Add touches
+          const grouped = aggregate(model.touches);
+          for (const touch of grouped) {
+            inputs.push({ path: touch.path, origin: touch.kind === "write" ? "written" : touch.kind === "edit" ? "edited" : "read", ts: touch.lastTs, bytes: 0 });
+          }
+
+          // Add links from message text
+          for (const msg of model.messages) {
+            for (const block of msg.blocks) {
+              if (block.kind === "text" && typeof block.text === "string") {
+                const paths = extractPaths(block.text, knownDirs);
+                for (const match of paths) {
+                  try {
+                    const s = await stat(match.path);
+                    inputs.push({ path: match.path, origin: "linked", ts: new Date(s.mtimeMs).toISOString(), bytes: s.size });
+                  } catch {
+                    // ignore if missing on disk
+                  }
+                }
+              }
+            }
+          }
+        } catch {
+          // ignore unreadable train car
+        }
+      }
+
+      const pins = await readFilePins(STATE_DIR, record.path);
+      const rows = mergeOrigins(inputs, pins);
+
+      return json({ rows });
+    },
+
     "/api/file": async (req) => {
       const denied = requireAuth(req);
       if (denied !== null) return denied;
