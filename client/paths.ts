@@ -174,3 +174,17 @@ export function looksLikePath(text: string): boolean {
   if (trimmed.length > 1 && trimmed.endsWith("/") && !trimmed.startsWith("/")) return true;
   return trimmed.includes("/") && FILE_EXT_ONLY.test(trimmed);
 }
+
+export function loomFileUrl(origin: string, path: string): string {
+  return `${origin}/?file=${encodeURIComponent(path)}`;
+}
+
+export function pathFromLoomUrl(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    const file = parsed.searchParams.get("file");
+    return file;
+  } catch {
+    return null;
+  }
+}
