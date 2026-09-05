@@ -143,8 +143,7 @@ import { wireTouchGestures } from "./touch.ts";
 
 import type {
   ProtoGroup,
-  Artifact,
-  CacheState,
+    CacheState,
   Frame,
   ModelSpec,
   PendingEcho,
@@ -160,6 +159,7 @@ import type {
   TrainCar,
   BarReading,
 } from "./types.ts";
+import { type FileRow, type Folds, sections, visibleCount } from "./files-panel.ts";
 import { need, state, ui } from "./store.ts";
 import { setStatus, toast } from "./status.ts";
 import { abandonDecorations, decoration, getJson } from "./request.ts";
@@ -1227,6 +1227,19 @@ function drawerMode(): "tasks" | "protos" | "files" {
 /** What `/api/prototypes` returns: subtree order, the entered record's group first. */
 const FINISHED: ReadonlySet<TaskStatus> = new Set<TaskStatus>(["done", "dropped", "promoted"]);
 const DRAWER_PICK_KEY = "loom-drawer";
+
+const DRAWER_FOLDS_KEY = "loom-drawer-folds";
+function getFolds(): Folds {
+  try {
+    const v = localStorage.getItem(DRAWER_FOLDS_KEY);
+    if (v) return JSON.parse(v);
+  } catch {}
+  return { code: true, data: true };
+}
+function setFolds(f: Folds) {
+  localStorage.setItem(DRAWER_FOLDS_KEY, JSON.stringify(f));
+}
+
 const DRAWER_DONE_KEY = "loom-drawer-done";
 let drawerShowDone = localStorage.getItem(DRAWER_DONE_KEY) === "1";
 
@@ -1256,7 +1269,7 @@ function drawDrawer(): void {
       ? JSON.stringify(["t", state.activeRecord, state.recordDoc?.tasks ?? null, drawerShowDone])
       : mode === "protos"
         ? JSON.stringify(["p", state.activeRecord, state.protos])
-        : JSON.stringify(["f", state.artifacts]);
+        : JSON.stringify(["f", state.activeRecord, state.files, getFolds()]);
   if (sig === drawerSig) return;
   drawerSig = sig;
 
@@ -1315,49 +1328,145 @@ function drawDrawerTasks(): void {
   ui.drawer.replaceChildren(frag);
 }
 
+
 function drawDrawerFiles(): void {
-  const groups: Array<{ kind: Artifact["kind"]; title: string }> = [
-    { kind: "write", title: "written" },
-    { kind: "edit", title: "edited" },
-    { kind: "read", title: "read" },
-  ];
+  const path = state.activeRecord;
+  let rows: FileRow[] = [];
+
+  if (path === null) {
+    // No record entered: fallback to session touches
+    rows = state.artifacts.map(a => ({
+      path: a.path,
+      name: a.name,
+      band: (a.kind === "read" ? "read" : "code") as "read" | "code" | "data",
+      origins: a.ops,
+      lastTs: a.lastTs,
+      bytes: 0,
+      pinned: false
+    }));
+  } else {
+    if (state.files === null || state.files.record !== path) {
+      ui.drawer.replaceChildren(
+        Object.assign(document.createElement("p"), { className: "art-empty", textContent: "looking for files…" }),
+      );
+      void loadFiles(path);
+      return;
+    }
+    rows = state.files.rows;
+  }
+
+  const folds = getFolds();
+  const sects = sections(rows, folds);
+  ui.drawerCount.textContent = String(visibleCount(rows, folds));
+  
   const frag = document.createDocumentFragment();
 
-  for (const group of groups) {
-    const items = state.artifacts.filter((a) => a.kind === group.kind);
-    if (items.length === 0) continue;
-    const section = document.createElement("div");
-    section.className = "art-group";
-    const heading = document.createElement("h4");
-    heading.textContent = `${group.title} · ${items.length}`;
-    section.append(heading);
+  for (const section of sects) {
+    const isCodeFold = section.title === "Code" && folds.code;
+    const isDataFold = section.title === "Data" && folds.data;
 
-    for (const artifact of items) {
-      const row = document.createElement("div");
-      row.className = `art ${artifact.kind}`;
-      row.dataset["path"] = artifact.path;
-      row.title = artifact.path;
-      const name = document.createElement("div");
-      name.className = "n";
-      name.textContent = artifact.name;
-      const detail = document.createElement("div");
-      detail.className = "d";
-      detail.textContent = `${artifact.ops.join("+")} ×${artifact.count} · ${dirLabel(artifact.path)}`;
-      row.append(name, detail);
-      section.append(row);
+    const div = document.createElement("div");
+    div.className = "art-group";
+    
+    // Check if it's folded (and thus we render the fold row)
+    if (isCodeFold || isDataFold) {
+      const type = section.title === "Code" ? "code" : "data";
+      const total = rows.filter(r => r.band === type).length;
+      
+      const foldBtn = document.createElement("button");
+      foldBtn.type = "button";
+      foldBtn.className = "drawer-more";
+      foldBtn.textContent = `+ ${total} ${type}`;
+      foldBtn.addEventListener("click", () => {
+        const newFolds = { ...folds, [type]: false };
+        setFolds(newFolds);
+        drawDrawer();
+      });
+      div.append(foldBtn);
+    } else {
+      const heading = document.createElement("h4");
+      // Add a fold button if it's code/data and currently open
+      if (section.title === "Code" || section.title === "Data") {
+        heading.style.cursor = "pointer";
+        heading.textContent = `− ${section.title} · ${section.rows.length}`;
+        heading.addEventListener("click", () => {
+          const type = section.title === "Code" ? "code" : "data";
+          const newFolds = { ...folds, [type]: true };
+          setFolds(newFolds);
+          drawDrawer();
+        });
+      } else {
+        heading.textContent = `${section.title} · ${section.rows.length}`;
+      }
+      div.append(heading);
+
+      for (const rowData of section.rows) {
+        const row = document.createElement("div");
+        row.className = `art ${rowData.band}`;
+        row.dataset["path"] = rowData.path;
+        row.title = rowData.path;
+        
+        row.addEventListener("click", (e) => {
+          // If they clicked the pin, don't open the file
+          if ((e.target as Element).closest(".art-pin")) return;
+          const abs = absolutise(rowData.path);
+          openInPane(abs);
+        });
+
+        const name = document.createElement("div");
+        name.className = "n";
+        name.textContent = rowData.name;
+        
+        const detail = document.createElement("div");
+        detail.className = "d";
+        detail.textContent = `${rowData.origins.join("+")} · ${dirLabel(rowData.path)}`;
+        
+        const pinBtn = document.createElement("button");
+        pinBtn.className = "art-pin";
+        pinBtn.type = "button";
+        pinBtn.textContent = rowData.pinned ? "★" : "☆";
+        pinBtn.addEventListener("click", async () => {
+          if (path === null) return;
+          const nowPinned = !rowData.pinned;
+          // Optimistically update
+          rowData.pinned = nowPinned;
+          drawDrawer();
+          try {
+            await fetch(`/api/files/pin`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ record: path, path: rowData.path, on: nowPinned })
+            });
+            // Re-fetch to ensure order is correct across multiple clients
+            void loadFiles(path);
+          } catch (e) {
+            rowData.pinned = !nowPinned;
+            drawDrawer();
+          }
+        });
+
+        const topRow = document.createElement("div");
+        topRow.style.display = "flex";
+        topRow.style.justifyContent = "space-between";
+        topRow.append(name, pinBtn);
+
+        row.append(topRow, detail);
+        div.append(row);
+      }
     }
-    frag.append(section);
+    frag.append(div);
   }
 
   ui.drawer.replaceChildren(frag);
-  ui.drawerCount.textContent = String(state.artifacts.length);
-  if (state.artifacts.length === 0) {
+
+  if (sects.length === 0) {
     const empty = document.createElement("p");
     empty.className = "art-empty";
     empty.textContent = "no files touched";
     ui.drawer.append(empty);
   }
 }
+
 
 /**
  * The prototypes surface (SPEC 134–137): the entered record's mockups plus its children's,
@@ -1466,6 +1575,29 @@ function protoRow(
 
   row.addEventListener("click", () => void jumpToProto(recordPath, version.name));
   return row;
+}
+
+
+async function loadFiles(path: string): Promise<void> {
+  try {
+    const rows = await getJson<FileRow[]>(`/api/files?record=${encodeURIComponent(path)}`);
+    if (state.activeRecord !== path) return;
+    state.files = { record: path, rows };
+    drawDrawer();
+  } catch {
+    // If it fails, fallback to formatting state.artifacts into FileRow shape
+    if (state.activeRecord !== path) return;
+    state.files = { record: path, rows: state.artifacts.map(a => ({
+      path: a.path,
+      name: a.name,
+      band: (a.kind === "read" ? "read" : "code") as "read" | "code" | "data",
+      origins: a.ops,
+      lastTs: a.lastTs,
+      bytes: 0,
+      pinned: false
+    })) };
+    drawDrawer();
+  }
 }
 
 async function loadProtos(path: string): Promise<void> {
@@ -2925,7 +3057,10 @@ function enterRecord(path: string): Promise<void> {
     // `journey4-records`, both failing, 2026-08-19). The pane is emptied in the same breath, so a
     // hidden surface never holds another project's text waiting to be revealed.
     ui.recordBody.replaceChildren();
-    afterTranscript(() => void loadRecordDoc(path));
+    afterTranscript(() => {
+      void loadRecordDoc(path);
+      void loadFiles(path);
+    });
   }
   state.pendingNew = false;
   drawTree();
@@ -3431,6 +3566,7 @@ function watchRecords(): void {
       // a lost verdict is worse than a stale list.
       if (touched && active !== null && document.querySelector(".task-form") === null) {
         await loadRecordDoc(active);
+        void loadFiles(active); // Refresh file index on the same signal the task list uses
       }
     })();
   }, RECORDS_POLL_MS);

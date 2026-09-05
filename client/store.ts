@@ -82,6 +82,8 @@ export const state = {
   drawerPick: null as "tasks" | "protos" | "files" | null,
   /** The prototypes surface's fetch, cached per record — null until first shown. */
   protos: null as { record: string; groups: ProtoGroup[] } | null,
+  /** The files surface's fetch, cached per record — null until first shown. */
+  files: null as { record: string; rows: import("./files-panel.ts").FileRow[] } | null,
   /**
    * What is open, in order, and which one the centre shows (SPEC 201) — the real state.
    *
