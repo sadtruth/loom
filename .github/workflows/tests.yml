@@ -16,14 +16,37 @@ jobs:
       - run: bun x tsc --noEmit
       - run: bun test tests/props
 
-  # loom-pins stays in the VAULT's CI: the journey fixture is generated from a real
-  # transcript (make-fixture.ts), which the public mirror deliberately does not ship.
-  loom-pins-disabled:
-    if: false
+  # The browser journeys, moved here from the vault's CI on 2026-09-06. The comment that used to
+  # sit here said the mirror does not ship `make-fixture.ts` — it does, `tests/fixture/` is in the
+  # export, so there was never a reason for the pins to live in the other repository. They ran in
+  # `sadtruth/personal-claude` only because loom got its own repo after that job was written.
+  #
+  # `journey29-nav-speed` is excluded: it measures wall-clock navigation latency against tight
+  # thresholds, and a shared 2-vCPU runner measures runner load instead. A green run here is not
+  # evidence about navigation latency.
+  loom-pins:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      LOOM_PIN_WORKERS: 2
+      LOOM_OUT: ${{ github.workspace }}/.cache/loom-pins
     steps:
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v1
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
       - run: bun install
-      - run: npx -y playwright install --with-deps
-      - run: env LOOM_PIN_WORKERS=1 bun run pins
+      - run: npx playwright install --with-deps chromium
+      - run: bun run pins -- --grep-invert journey29-nav-speed
+      - name: Upload Playwright artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: loom-pins-results
+          path: .cache/loom-pins/
+          retention-days: 7
+          # Both output dirs start with a dot, and upload-artifact@v4 skips hidden paths by
+          # default — without this the step succeeds and uploads nothing.
+          include-hidden-files: true
+          if-no-files-found: ignore
