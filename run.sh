@@ -5,6 +5,16 @@ cd "$(dirname "$0")"
 
 [[ -d node_modules ]] || bun install
 
+# The install's own values (vault root, core paths, account names). The source ships neutral
+# placeholders for the public mirror, so without this file loom runs knowing nothing about this
+# machine. loom.service reads the same file through EnvironmentFile; see local.env.example.
+LOCAL_ENV="${LOOM_LOCAL_ENV:-$HOME/.config/loom/local.env}"
+if [[ -f "$LOCAL_ENV" ]]; then
+  set -a; . "$LOCAL_ENV"; set +a
+else
+  printf 'run.sh: no %s — loom will start with placeholder paths and empty cores\n' "$LOCAL_ENV" >&2
+fi
+
 # A session worktree carries `.session` at the repo root (tools/session/session.sh new). The port is
 # the one thing that must differ per worktree, so read it instead of making every session remember an
 # env var. The main tree has no marker and keeps 4173, the port loom.service serves.

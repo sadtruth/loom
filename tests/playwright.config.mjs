@@ -328,9 +328,16 @@ export default defineConfig({
       LOOM_AGY_PROJECTS_ROOT: join(ROOT, "tests", "fixture", slotFor("agy-projects", i)),
       // The spouse core's watched dir falls back into the real vault — seal it into the run.
       LOOM_SPOUSE_DIR: join(ROOT, "tests", "fixture", slotFor("spouse-dir", i)),
+      // The rest of that core, for the same reason: where its sessions run and what it is called are
+      // the install's business, and both fall back into the real vault (2026-09-05).
+      LOOM_SPOUSE_CORE: join(ROOT, "tests", "fixture", slotFor("spouse-core", i)),
+      LOOM_SPOUSE_LABEL: "Spouse",
       LOOM_FIXTURE_AUTH: join(ROOT, "tests", slotFor(".state", i)),
       LOOM_FIXTURE_RECORDS: join(ROOT, "tests", "fixture", slotFor(".records", i)),
       LOOM_STATE: join(OUT, slotFor("test-results", i), "state"),
+      // Session→project links. It falls back THROUGH LOOM_STATE to a path in the real vault, so the
+      // fallback escapes even though LOOM_STATE right above is sealed — name it too.
+      LOOM_LINKS: join(OUT, slotFor("test-results", i), "state"),
       // Where this run's children live (SPEC 255). Slotted like everything else, and swept above.
       LOOM_SPOOL: join(OUT, slotFor("test-results", i), "spool"),
       LOOM_POLL_MS: "200",

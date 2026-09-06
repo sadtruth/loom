@@ -63,9 +63,17 @@ const GEMINI = [
 
 const THIRD_PARTY = ["claude-sonnet-4-6", "claude-opus-4-6-thinking", "gpt-oss-120b-medium"] as const;
 
+/**
+ * The Google login behind `g1`. The source carries a neutral placeholder and the real login comes
+ * from the environment, so EVERY comparison against it must go through this constant: a
+ * personalised install whose account name is still compared to the literal reads as a second,
+ * unknown account and quietly takes the two-account branch (2026-09-05).
+ */
+export const PRIMARY_GOOGLE_ACCOUNT: GoogleAccount = Bun.env["LOOM_GOOGLE_ACCOUNT"] ?? "google-account-1";
+
 /** `key` is what an id and a budget are prefixed with; `account` is the Google login behind it. */
 export const GOOGLE_ACCOUNTS: ReadonlyArray<{ key: "g1" | "g2"; account: GoogleAccount }> = [
-  { key: "g1", account: Bun.env["LOOM_GOOGLE_ACCOUNT"] ?? "google-account-1" },
+  { key: "g1", account: PRIMARY_GOOGLE_ACCOUNT },
 ];
 
 function googleModels(): ModelSpec[] {

@@ -19,7 +19,7 @@
  * fully readable and unaffected.
  */
 
-import { BUDGET_IDS, type BudgetId } from "./models.ts";
+import { BUDGET_IDS, PRIMARY_GOOGLE_ACCOUNT, type BudgetId } from "./models.ts";
 import { readCurrentGoogleQuota, resetGoogleQuotaState, type GoogleAccount } from "./quota-google.ts";
 import { readCurrentJulesQuota, resetJulesQuotaState } from "./quota-jules.ts";
 import { readCurrentQuota, resetQuotaState } from "./usage.ts";
@@ -305,7 +305,7 @@ async function getJulesBudget(now: number): Promise<BudgetEntry> {
 export async function readCurrentBudgets(now = Date.now()): Promise<BudgetsReport> {
   const [anthropicRes, g1Res, julesRes] = await Promise.allSettled([
     getAnthropicBudget(now),
-    getGoogleBudgets("g1", "google-account-1", now),
+    getGoogleBudgets("g1", PRIMARY_GOOGLE_ACCOUNT, now),
     getJulesBudget(now),
   ]);
 

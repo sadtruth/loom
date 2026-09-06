@@ -678,6 +678,26 @@ button.seam-open:hover { background: var(--bg-sunken); color: var(--ink); }
 .art.write { border-left-color: var(--user); }
 .art.edit { border-left-color: var(--warn); }
 .art.read { border-left-color: var(--line); }
+/* The pin is an affordance, not information: a column of ☆ down every row is noise the eye filters
+   on every read. Hidden until the row is hovered or focused — except when it is ON, where the ★ IS
+   the information (this file is pinned) and has to survive the pointer leaving. */
+.art-pin {
+  background: none;
+  border: 0;
+  padding: 0 2px;
+  margin-left: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--ink-faint);
+  opacity: 0;
+  transition: opacity 90ms linear;
+}
+.art:hover .art-pin,
+.art:focus-within .art-pin,
+.art-pin.on { opacity: 1; }
+.art-pin.on { color: var(--warn); }
+.art-pin:hover { color: var(--ink); }
 .art-empty { color: var(--ink-faint); font-size: 12px; padding: 10px; }
 
 /* ── prototype rows (SPEC 135) ──────────────────────────────

@@ -358,9 +358,15 @@ for (const stage of stages) {
   // Only the browser stages get the ceiling. Typecheck and the properties are seconds and single-
   // process; boxing them buys nothing and adds a failure mode.
   const cmd = stage.cmd[0] === "./node_modules/.bin/playwright" ? capped(stage.cmd) : stage.cmd;
+  // Tests assert the neutral defaults the public repository ships, and a developer's
+  // environment must not be able to change the result.
+  const baseEnv =
+    stage.key === "properties"
+      ? Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("LOOM_")))
+      : process.env;
   const res = spawnSync(cmd[0] ?? "", cmd.slice(1), {
     cwd: HERE,
-    env: { ...process.env, ...(stage.env ?? {}) },
+    env: { ...baseEnv, ...(stage.env ?? {}) },
     encoding: "utf8",
     maxBuffer: 50 * 1024 * 1024,
   });

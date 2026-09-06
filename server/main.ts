@@ -22,14 +22,14 @@ import { addAccept, readAccepts, type Accept } from "./accepts.ts";
 import { openPath } from "./open.ts";
 import { MAX_BYTES, truncateUtf8, guardFrom, kindOf, listDir, locate, looksBinary, resolveWiki, wikiScope, contentDisposition, writableFile } from "./files.ts";
 import { stat } from "node:fs/promises";
-import { readFileSync, type Stats } from "node:fs";
+import { existsSync, readFileSync, type Stats } from "node:fs";
 import { PermitBroker, type Permit, type Verdict } from "./permits.ts";
 import { MODEL_SPECS, asModelId } from "./models.ts";
 import { writePick, readAllPicks } from "./picks.ts";
 import { asEffort, asModel, Runner, type JobEvent, type JobState, type QueuedMessage } from "./input.ts";
 import { authed, loadToken, loginResponse } from "./auth.ts";
 import { frameOf, scanRecords, scanRecordsUncached, recordsWithStaleness, type RecordInfo } from "./records.ts";
-import { CORES, cwdFor, homeFor, usableCores } from "./cores.ts";
+import { CORES, VAULT, cwdFor, homeFor, usableCores } from "./cores.ts";
 import { homedir, hostname } from "node:os";
 import { readAskRules } from "./askrules.ts";
 import { compactLinks, mergeByLink, readLinks, sessionsOf, writeLink } from "./links.ts";
@@ -56,7 +56,7 @@ import { findIntroduction, listPrototypes } from "./protos.ts";
 import { readBarReading } from "./bar.ts";
 import { readCurrentBudgets } from "./budgets.ts";
 import { buildState } from "./build-state.ts";
-import { assembleTrainFor, storeKeyOf, type Train } from "./train.ts";
+import { assembleTrainFor, storeKeyOf, type Train, type TrainCar } from "./train.ts";
 import { mergeOrigins, walkRecordDirectory, setFilePin, readFilePins, type OriginInput } from "./fileindex.ts";
 import { extractPaths } from "../client/paths.ts";
 import { parseTranscript } from "./transcript.ts";
@@ -131,9 +131,7 @@ const STATE_DIR = Bun.env["LOOM_STATE"] ?? join(import.meta.dir, "..", "state");
  * `LOOM_STATE` still wins where it is set, so every test slot stays isolated exactly as before.
  */
 const LINKS_DIR =
-  Bun.env["LOOM_LINKS"] ??
-  Bun.env["LOOM_STATE"] ??
-  "/home/user/resilio/docs/Projects/Personal Claude/tools/loom/state";
+  Bun.env["LOOM_LINKS"] ?? Bun.env["LOOM_STATE"] ?? `${VAULT}/Projects/Personal Claude/tools/loom/state`;
 // Boot, before the first request: migrates an old whole-object links.json to the append-only
 // shape unconditionally, and folds an already-new-shape log once it has grown past its threshold —
 // see `compactLinks`'s doc comment in links.ts. `writeLink` only ever appends, so the very first
@@ -195,6 +193,19 @@ const AGY_ROOT = Bun.env["LOOM_AGY_PROJECTS_ROOT"] ?? AGY_PROJECTS_ROOT;
 const POLL_MS = Number(Bun.env["LOOM_POLL_MS"] ?? 500);
 const CLAUDE_BIN = Bun.env["LOOM_CLAUDE_BIN"] ?? "claude";
 const PERMIT_TIMEOUT_MS = Number(Bun.env["LOOM_PERMIT_TIMEOUT_MS"] ?? 30 * 60 * 1000);
+
+/**
+ * A vault root that does not exist is not a small misconfiguration: every core reads "no vault yet",
+ * no session can be tied to a project, and until 2026-09-05 nothing anywhere said so. The source
+ * ships neutral placeholders for the public mirror, so the ONE thing an install must get right is
+ * this path — say it out loud at boot rather than serving a loom that silently knows nothing.
+ */
+if (!existsSync(VAULT)) {
+  console.error(
+    `loom: core vault ${VAULT} does not exist — cores and project links will be empty. ` +
+      `Set LOOM_CORE_VAULT (see tools/loom/local.env.example).`
+  );
+}
 
 // server → loom → tools → Personal Claude → Projects → the vault root.
 const VAULT_ROOT = join(import.meta.dir, "..", "..", "..", "..", "..");
@@ -464,6 +475,28 @@ const TOKEN = await loadToken(STATE_DIR);
 /** SPEC invariant 7: every data route requires the device token. Null means "carry on". */
 function requireAuth(req: Request): Response | null {
   return authed(req, TOKEN, PORT) ? null : json({ error: "unauthenticated" }, 401);
+}
+
+/**
+ * A record's train, derived in ONE place.
+ *
+ * Two arguments differ only in which directory they name — the record's own store and the core's —
+ * and passing the core for both makes assembleTrainFor short-circuit (train.ts:195) and return every
+ * session in the core instead of this record's. When the transcript and the FILES tab each spelled
+ * this call out for themselves they drifted exactly that way, and the panel listed 1898 files from
+ * 362 sessions of projects the record never touched. Every surface that needs a train calls this.
+ */
+async function carsFor(recordPath: string): Promise<TrainCar[]> {
+  const ownKey = storeKeyOf(dirname(recordPath));
+  const coreKey = storeKeyOf(cwdFor(recordPath));
+  const linked = new Set(sessionsOf(recordPath, await readLinks(LINKS_DIR)));
+  return assembleTrainFor(
+    join(ROOT, ownKey),
+    join(ROOT, coreKey),
+    linked,
+    join(AGY_ROOT, ownKey),
+    join(AGY_ROOT, coreKey),
+  );
 }
 
 // Both generics must be explicit: Bun.serve<WebSocketData, RoutePaths>. Fixing the first without the
@@ -886,14 +919,7 @@ const server = Bun.serve<SocketData, Routes>({
       //
       // Since cores, the record's own store is no longer the whole train: sessions spawned after
       // 2026-08-16 live in the core's store and are found through the link. Both sources, one order.
-      const linked = new Set(sessionsOf(record.path, await readLinks(LINKS_DIR)));
-      const cars = await assembleTrainFor(
-        join(ROOT, key),
-        join(ROOT, storeKeyOf(cwdFor(record.path))),
-        linked,
-        join(AGY_ROOT, key),
-        join(AGY_ROOT, storeKeyOf(cwdFor(record.path))),
-      );
+      const cars = await carsFor(record.path);
       return json({ record: record.path, cwd, key: cars.length > 0 ? key : null, cars } satisfies Train);
     },
 
@@ -1350,14 +1376,7 @@ const server = Bun.serve<SocketData, Routes>({
       }
 
       // 2. train touches & 3. linked paths
-      const linked = new Set(sessionsOf(record.path, await readLinks(LINKS_DIR)));
-      const cars = await assembleTrainFor(
-        join(ROOT, storeKeyOf(cwdFor(record.path))),
-        join(ROOT, storeKeyOf(cwdFor(record.path))),
-        linked,
-        join(AGY_ROOT, storeKeyOf(cwdFor(record.path))),
-        join(AGY_ROOT, storeKeyOf(cwdFor(record.path))),
-      );
+      const cars = await carsFor(record.path);
 
       const knownDirs: string[] = [recordDir];
 

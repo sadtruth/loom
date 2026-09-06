@@ -26,7 +26,8 @@
 import { closeSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import type { GoogleAccount, GooglePool } from "./models.ts";
+import { VAULT } from "./cores.ts";
+import { PRIMARY_GOOGLE_ACCOUNT, type GoogleAccount, type GooglePool } from "./models.ts";
 
 export type { GoogleAccount, GooglePool };
 
@@ -51,7 +52,7 @@ export interface GoogleQuota {
   at: number;
 }
 
-export const AGY_LAUNCHER = "/home/user/resilio/docs/Projects/other-models/gemini-for-cheap/agy.sh";
+export const AGY_LAUNCHER = process.env["AGY_BIN"] ?? `${VAULT}/Projects/other-models/gemini-for-cheap/agy.sh`;
 const POLL_MS = 60_000;
 const SUBPROCESS_TIMEOUT_MS = 15_000;
 const LOCK_STALE_MS = 30_000;
@@ -237,7 +238,7 @@ interface AccountState {
 }
 
 const accountStates = new Map<GoogleAccount, AccountState>([
-  ["google-account-1", { lastGood: null, stale: false, lastAttempt: 0, inflight: null, lastFailure: null }],
+  [PRIMARY_GOOGLE_ACCOUNT, { lastGood: null, stale: false, lastAttempt: 0, inflight: null, lastFailure: null }],
 ]);
 
 function getState(account: GoogleAccount): AccountState {
@@ -251,7 +252,7 @@ function getState(account: GoogleAccount): AccountState {
 
 async function runUsageCli(account: GoogleAccount): Promise<{ ok: true; stdout: string } | { ok: false; error: string }> {
   try {
-    const profile = (account as string) !== "google-account-1" ? (account as string) : undefined;
+    const profile = (account as string) !== PRIMARY_GOOGLE_ACCOUNT ? (account as string) : undefined;
     const proc = Bun.spawn([AGY_LAUNCHER, "--model", "gemini-3.7-flash-high", "-p", "/usage"], {
       ...(profile ? { env: { ...process.env, AGY_PROFILE: profile } } : {}),
       stdout: "pipe",
@@ -296,7 +297,7 @@ async function pollAccount(account: GoogleAccount, now: number): Promise<void> {
 
     const stubPath =
       process.env[`LOOM_QUOTA_STUB_GOOGLE_${account.toUpperCase()}`] ??
-      ((account as string) === "google-account-1" ? process.env["LOOM_QUOTA_STUB_G1"] : process.env["LOOM_QUOTA_STUB_G2"]) ??
+      ((account as string) === PRIMARY_GOOGLE_ACCOUNT ? process.env["LOOM_QUOTA_STUB_G1"] : process.env["LOOM_QUOTA_STUB_G2"]) ??
       process.env["LOOM_QUOTA_STUB_GOOGLE"] ??
       process.env["LOOM_QUOTA_STUB"];
 
@@ -368,7 +369,7 @@ async function pollAccount(account: GoogleAccount, now: number): Promise<void> {
 }
 
 export async function readCurrentGoogleQuota(
-  account: GoogleAccount = "google-account-1",
+  account: GoogleAccount = PRIMARY_GOOGLE_ACCOUNT,
   now = Date.now()
 ): Promise<{ quota: GoogleQuota | null; stale: boolean; reason?: string | null }> {
   const state = getState(account);

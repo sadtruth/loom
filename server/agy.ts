@@ -11,12 +11,13 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeF
 import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { VAULT } from "./cores.ts";
 import { escapeCwd, type StartRequest } from "./input.ts";
 import { specFor } from "./models.ts";
 
 /** The launcher script that wraps agy with proxy, self-heal, and timeout settings. */
 export const AGY_LAUNCHER =
-  process.env["AGY_BIN"] ?? "/home/user/resilio/docs/Projects/other-models/gemini-for-cheap/agy.sh";
+  process.env["AGY_BIN"] ?? `${VAULT}/Projects/other-models/gemini-for-cheap/agy.sh`;
 
 /**
  * The shadow transcript root for agy sessions.

@@ -6,6 +6,7 @@ import { Runner } from "./input.ts";
 export class SubagentWatcher {
   private watchers = new Map<string, ReturnType<typeof watch>>();
   private knownFiles = new Set<string>();
+  private poller: ReturnType<typeof setInterval> | null = null;
 
   constructor(
     private readonly sessionDir: string,
@@ -17,10 +18,22 @@ export class SubagentWatcher {
   public start() {
     this.pollDir();
     // Poll the directory occasionally to find new subagents without relying entirely on fs.watch for directories
-    setInterval(() => this.pollDir(), 2000);
+    this.poller = setInterval(() => this.pollDir(), 2000);
   }
 
+  /**
+   * Clears the poller as well as the file watchers.
+   *
+   * The interval closure holds `this`; `this.onEmit` closes over the Watcher that built it; and
+   * that Watcher holds the Tailer with a whole session's parsed transcript. So an uncleared
+   * interval did not leak a timer — it leaked one session's transcript per detach, and went on
+   * calling readdirSync every two seconds for a session nobody was reading. Measured on prod
+   * 2026-09-06: 6.3 GB resident after 14 hours, with the GC threads busy the whole time
+   * (record item 88).
+   */
   public stop() {
+    if (this.poller !== null) clearInterval(this.poller);
+    this.poller = null;
     for (const watcher of this.watchers.values()) watcher.close();
     this.watchers.clear();
   }

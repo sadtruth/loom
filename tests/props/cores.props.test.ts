@@ -9,9 +9,13 @@
 
 import { describe, expect, test } from "bun:test";
 import fc from "fast-check";
-import { CORES, coreFor, cwdFor, defaultCore, homeFor, under, usableCores } from "../../server/cores.ts";
+import { CORES, SPOUSE_DIR, VAULT, coreFor, cwdFor, defaultCore, homeFor, under, usableCores } from "../../server/cores.ts";
 
-const VAULT = "/home/user/resilio/docs";
+// VAULT and SPOUSE_DIR come from the module, not a literal repeated here. When the source carried a
+// hardcoded vault path the two happened to agree and these tests looked like they tested `coreFor`;
+// the moment the path moved to the environment they failed, because what they had really pinned was
+// the literal (2026-09-05). Read from the module and they say what they meant: these RELATIONSHIPS
+// hold on whatever vault this install names.
 const always = (): boolean => true;
 const never = (): boolean => false;
 
@@ -53,7 +57,7 @@ describe("coreFor", () => {
   });
 
   test("Spouse owns her area", () => {
-    expect(coreFor(`${VAULT}/Areas/Family/spouse/anything.pdf`).id).toBe("spouse");
+    expect(coreFor(`${SPOUSE_DIR}/anything.pdf`).id).toBe("spouse");
   });
 });
 

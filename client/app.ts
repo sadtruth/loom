@@ -1428,8 +1428,9 @@ function drawDrawerFiles(): void {
         detail.textContent = `${rowData.origins.join("+")} · ${dirLabel(rowData.path)}`;
         
         const pinBtn = document.createElement("button");
-        pinBtn.className = "art-pin";
+        pinBtn.className = rowData.pinned ? "art-pin on" : "art-pin";
         pinBtn.type = "button";
+        pinBtn.title = rowData.pinned ? "unpin" : "pin";
         pinBtn.textContent = rowData.pinned ? "★" : "☆";
         pinBtn.addEventListener("click", async () => {
           if (path === null) return;

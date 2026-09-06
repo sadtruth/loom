@@ -10,7 +10,8 @@
  */
 
 import { existsSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 
 export type CoreId = "personal" | "work" | "spouse";
 
@@ -60,8 +61,18 @@ export interface Core {
  * children into the real Personal Claude and their transcripts landed in the real store. A core
  * is a statement about one fixed tree; a path that moves with the checkout cannot be it.
  */
-export const VAULT = Bun.env["LOOM_CORE_VAULT"] ?? "/home/user/resilio/docs";
+export const VAULT = Bun.env["LOOM_CORE_VAULT"] ?? join(homedir(), "resilio", "docs");
 
+/**
+ * Every core path below is a GUESS until the machine names its own. The source carries neutral
+ * placeholders so a public checkout leaks nothing, and the install that owns the real vault sets
+ * these in `~/.config/loom/local.env` (read by `run.sh` and by loom.service). Getting this wrong is
+ * silent and total: on 2026-09-05 a deploy carried a placeholder vault root and every core came up
+ * "no vault yet", no session was tied to a project, and nothing in the log said why. `main.ts`
+ * warns at boot when VAULT does not exist, which is the loud half of the same lesson.
+ */
+export const SPOUSE_LABEL = Bun.env["LOOM_SPOUSE_LABEL"] ?? "Spouse";
+export const SPOUSE_CORE = Bun.env["LOOM_SPOUSE_CORE"] ?? `${VAULT}/Projects/Spouse Claude`;
 export const SPOUSE_DIR = Bun.env["LOOM_SPOUSE_DIR"] ?? `${VAULT}/Areas/Family/spouse`;
 
 /**
@@ -84,10 +95,10 @@ export const CORES: readonly Core[] = [
   },
   {
     id: "spouse",
-    label: "Spouse",
-    cwd: `${VAULT}/Projects/Spouse Claude`,
-    owns: [SPOUSE_DIR, `${VAULT}/Projects/Spouse Claude`],
-    home: `${VAULT}/Projects/Spouse Claude/projects`,
+    label: SPOUSE_LABEL,
+    cwd: SPOUSE_CORE,
+    owns: [SPOUSE_DIR, SPOUSE_CORE],
+    home: `${SPOUSE_CORE}/projects`,
   },
   {
     id: "personal",
