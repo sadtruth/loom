@@ -606,6 +606,12 @@ button.seam-open:hover { background: var(--bg-sunken); color: var(--ink); }
   background: var(--bg-sunken);
 }
 .rich-grid figcaption { font-size: 11px; color: var(--ink-faint); margin-top: 3px; }
+/* A diagram scales to the column and never scrolls inside the message (SPEC 149, 150, 269).
+   mermaid writes its own max-width onto the root svg, which would otherwise win. */
+.rich-mermaid { margin: 0 0 0.75em; }
+.rich-mermaid svg { display: block; width: 100%; height: auto; max-width: 100% !important; }
+.mermaid-placeholder { font-size: 11px; color: var(--ink-faint); min-height: 18px; }
+.mermaid-placeholder::before { content: "diagram\2026"; }
 .rich-src { margin-top: 4px; }
 .rich-src summary { cursor: pointer; font-size: 11px; color: var(--ink-faint); }
 

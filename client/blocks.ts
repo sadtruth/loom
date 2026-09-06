@@ -9,6 +9,7 @@
 import type { RecordLike } from "./chips.ts";
 import { renderPlanBlock } from "./plan-block.ts";
 import { embedPage } from "./embed.ts";
+import { renderMermaid } from "./mermaid-block.ts";
 
 export type BlockRenderer = (source: string, ctx: BlockContext) => HTMLElement;
 
@@ -134,6 +135,7 @@ export const REGISTRY: Record<string, BlockRenderer> = {
   grid: renderGrid,
   iframe: renderIframe,
   plan: renderPlan,
+  mermaid: renderMermaid,
 };
 
 export function isRichTag(tag: string): boolean {
