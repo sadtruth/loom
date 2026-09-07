@@ -34,11 +34,23 @@ export function renderMermaid(source: string, _ctx: BlockContext): HTMLElement {
   wrap.append(placeholder);
 
   if (mermaidPromise === null) {
-    mermaidPromise = import("mermaid").then((m) => {
+    // Loaded from /vendor/mermaid rather than imported by name: bundling mermaid with the rest of
+    // the client makes mermaid.render throw inside DOMPurify, and every diagram then renders with
+    // no labels and NaN geometry (2026-09-07). The path is assembled at runtime so the bundler
+    // cannot resolve it and pull the library back in.
+    const url = ["", "vendor", "mermaid", "mermaid.esm.mjs"].join("/");
+    mermaidPromise = import(url).then((m: { default: any }) => {
       m.default.initialize({
         startOnLoad: false,
         securityLevel: "strict",
-        theme: "dark",
+        // loom's UI is light (style.css: "i hate the black theme, make it white"), and the dark
+        // theme drew dark labels on dark nodes, so nothing in a diagram could be read.
+        theme: "default",
+        // Labels as SVG <text> rather than HTML inside <foreignObject>. The sanitize pass below
+        // keeps SVG only, so HTML labels were stripped out and every node came out blank while
+        // its box and edges survived (2026-09-07).
+        htmlLabels: false,
+        flowchart: { htmlLabels: false },
         suppressErrorRendering: true,
       });
       return m.default;

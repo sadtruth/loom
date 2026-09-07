@@ -709,6 +709,22 @@ const server = Bun.serve<SocketData, Routes>({
         headers: { "content-type": "text/javascript", "cache-control": "no-store" },
       }),
 
+    // mermaid's own prebuilt ESM, served straight out of node_modules. Bundling mermaid with the
+    // rest of the client breaks it: mermaid.render throws inside DOMPurify, so every diagram came
+    // out with no labels and paths laid out on NaN coordinates (2026-09-07). The same versions load
+    // and render correctly from this build, so the library is loaded at runtime instead. Tokenless
+    // like the shell above — it is a third-party library, not data.
+    "/vendor/mermaid/*": (req) => {
+      const prefix = "/vendor/mermaid/";
+      const rest = new URL(req.url).pathname.slice(prefix.length);
+      const dist = join(import.meta.dir, "..", "node_modules", "mermaid", "dist");
+      const path = join(dist, rest);
+      if (rest.length === 0 || !path.startsWith(`${dist}/`)) {
+        return new Response("not found", { status: 404 });
+      }
+      return new Response(Bun.file(path), { headers: { "content-type": "text/javascript" } });
+    },
+
     // Changes on every restart, so a page left open can notice its own bundle is stale and say so
     // instead of quietly showing yesterday's UI. Tokenless like the shell above: it is one number.
     "/api/build": () => json({ build: BUILD }),
