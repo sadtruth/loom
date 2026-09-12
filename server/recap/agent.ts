@@ -102,6 +102,11 @@ const defaultSpawn: Spawn = async (args, opts) => {
     stdin: new TextEncoder().encode(opts.stdin),
     stdout: "pipe",
     stderr: "pipe",
+    env: {
+      ...process.env,
+      NO_PROXY: "localhost,127.0.0.1,::1",
+      no_proxy: "localhost,127.0.0.1,::1",
+    },
     // NOT isolated with CLAUDE_CONFIG_DIR, though it keeps the store clean: a fresh config dir has
     // no credentials, and the child exits 1 with nothing on stderr. The store the child does create
     // is removed by the caller instead (requirement 177).

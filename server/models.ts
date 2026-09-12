@@ -13,8 +13,8 @@
  * What they share is the shape loom needs: one long-lived child, NDJSON in, stream-json out, one
  * turn per message. Verified by hand on 2026-09-01, before any of this was written.
  *
- * Ids carry the account on purpose. A second subscription served the same `gemini-3.7-flash-high`,
- * so the pickable id is `g1:gemini-3.7-flash-high` while `arg` holds the bare name that goes on the
+ * Ids carry the account on purpose. A second subscription served the same `gemini-3.8-flash-high`,
+ * so the pickable id is `g1:gemini-3.8-flash-high` while `arg` holds the bare name that goes on the
  * command line. That account is gone (see GoogleAccount below), but the prefix stays: without it a
  * pick could not say which subscription it meant to spend.
  */
@@ -51,7 +51,7 @@ export interface ModelSpec {
 }
 
 const GEMINI = [
-  "3.7-flash-high",
+  "3.8-flash-high",
   "3.7-flash-medium",
   "3.7-flash-low",
   "3.6-flash-high",

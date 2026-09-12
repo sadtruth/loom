@@ -163,7 +163,7 @@ describe("Defect 1: Resumed session with missing conversation ID", () => {
       cwd,
       text: "hello",
       mode: "auto",
-      model: "g1:gemini-3.7-flash-high",
+      model: "g1:gemini-3.8-flash-high",
       effort: "default",
       browser: false,
       images: [],
@@ -505,7 +505,7 @@ describe("Property 4: agyArgs and shadow transcript path separation", () => {
       cwd: "/home/user/project",
       text: "hello",
       mode: "auto",
-      model: "g1:gemini-3.7-flash-high",
+      model: "g1:gemini-3.8-flash-high",
       effort: "default",
       browser: false,
       images: [],
@@ -516,7 +516,7 @@ describe("Property 4: agyArgs and shadow transcript path separation", () => {
     expect(args).toContain("--add-dir");
     expect(args).toContain("/home/user/project");
     expect(args).toContain("--model");
-    expect(args).toContain("gemini-3.7-flash-high");
+    expect(args).toContain("gemini-3.8-flash-high");
     expect(args).toContain("--input-format");
     expect(args).toContain("stream-json");
     expect(args).toContain("--output-format");

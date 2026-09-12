@@ -113,7 +113,7 @@ test("google-pro-models: two session streams, family optgroups, per-session mode
   await expect(page.locator("#status")).toContainText("new session");
 
   // Model picker has switched to Google family
-  await expect(pickModel).toHaveValue("g1:gemini-3.7-flash-high");
+  await expect(pickModel).toHaveValue("g1:gemini-3.8-flash-high");
   expect(await claudeGroups.first().evaluate((el) => el.disabled)).toBe(true);
   expect(await googleGroups.first().evaluate((el) => el.disabled)).toBe(false);
 

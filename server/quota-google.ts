@@ -3,7 +3,7 @@
  *
  * Reads quota limits for Google AI Pro subscriptions (Gemini models and third-party models)
  * via the Antigravity CLI's `/usage` slash command:
- *   /home/user/resilio/docs/Projects/other-models/gemini-for-cheap/agy.sh --model gemini-3.7-flash-high -p "/usage"
+ *   /home/user/resilio/docs/Projects/other-models/gemini-for-cheap/agy.sh --model gemini-3.8-flash-high -p "/usage"
  *
  * ── PARSING SPECIFICATION ────────────────────────────────────────────────────────────────
  * Output format is tab-separated lines:
@@ -253,7 +253,7 @@ function getState(account: GoogleAccount): AccountState {
 async function runUsageCli(account: GoogleAccount): Promise<{ ok: true; stdout: string } | { ok: false; error: string }> {
   try {
     const profile = (account as string) !== PRIMARY_GOOGLE_ACCOUNT ? (account as string) : undefined;
-    const proc = Bun.spawn([AGY_LAUNCHER, "--model", "gemini-3.7-flash-high", "-p", "/usage"], {
+    const proc = Bun.spawn([AGY_LAUNCHER, "--model", "gemini-3.8-flash-high", "-p", "/usage"], {
       ...(profile ? { env: { ...process.env, AGY_PROFILE: profile } } : {}),
       stdout: "pipe",
       stderr: "pipe",
