@@ -480,6 +480,8 @@ export function childArgs(bin: string, req: StartRequest): string[] {
     "--settings",
     childSettings(req.mode, req.cwd),
     "--strict-mcp-config",
+    "--permission-prompts", "host",
+    "--permission-prompt-tool", "stdio",
     "--mcp-config",
     childMcpConfig(req.cwd),
     ...(req.model === "default" ? [] : ["--model", req.model]),
@@ -668,6 +670,13 @@ export class Runner {
   ) {}
 
   /** Called once at startup, after the settings file has been read. */
+  /** Wired by the server to the permit broker, so a `can_use_tool` request becomes a card. */
+  private askPermission: (sessionId: string, toolName: string, input: unknown) => Promise<"allow" | "deny"> =
+    async () => "deny";
+  setAskPermission(ask: (sessionId: string, toolName: string, input: unknown) => Promise<"allow" | "deny">): void {
+    this.askPermission = ask;
+  }
+
   setAskRules(rules: readonly AskRule[]): void {
     this.askRules = [...rules];
   }
@@ -1327,6 +1336,27 @@ export class Runner {
       return;
     }
 
+    if (row["type"] === "control_request") {
+      // The CLI asks the host before a tool the permission mode will not decide on its own.
+      // Without an answer here it reports "no approval surface in this session" and denies.
+      const request = row["request"] as Record<string, unknown> | undefined;
+      const requestId = row["request_id"];
+      if (request?.["subtype"] === "can_use_tool" && typeof requestId === "string") {
+        const toolName = typeof request["tool_name"] === "string" ? request["tool_name"] : "unknown";
+        const input = request["input"];
+        void this.askPermission(sessionId, toolName, input).then((verdict) => {
+          const decision =
+            verdict === "allow"
+              ? { behavior: "allow", updatedInput: input }
+              : { behavior: "deny", message: "loom: denied by User" };
+          writeLine(child.stdinFd, JSON.stringify({
+            type: "control_response",
+            response: { subtype: "success", request_id: requestId, response: decision },
+          }));
+        });
+      }
+      return;
+    }
     if (row["type"] === "control_response") {
       const response = row["response"] as Record<string, unknown> | undefined;
       const id = response?.["request_id"];

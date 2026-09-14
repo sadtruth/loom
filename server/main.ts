@@ -440,6 +440,7 @@ const runner = new Runner(CLAUDE_BIN, `http://127.0.0.1:${PORT}/api/permit/ask`,
     stepMs: event.stepMs,
   }),
 );
+runner.setAskPermission((sessionId, toolName, input) => broker.ask(sessionId, toolName, input));
 
 /**
  * Take back whatever the previous loom left running, before a single request is served (SPEC 255).
