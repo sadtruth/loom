@@ -515,6 +515,7 @@ type Routes =
   | "/icon-192.png"
   | "/icon-512.png"
   | "/sw.js"
+  | "/vendor/mermaid/*"
   | "/api/build"
   | "/api/projects"
   | "/api/projects/:key/sessions"
