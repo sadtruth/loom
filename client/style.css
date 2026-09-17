@@ -3025,7 +3025,13 @@ button.seam-open:hover { background: var(--bg-sunken); color: var(--ink); }
    the window for anything that does not support it. */
 #composer-text { field-sizing: content; max-height: 40vh; }
 
-/* ── the gathered package, inside the transcript ───────────────────────────── */
+#preprompt-flow:empty { display: none; }
+#preprompt-flow {
+  max-height: 46vh; overflow-y: auto; padding: 0 16px; border-top: 1px solid var(--line-soft);
+  background: var(--bg);
+}
+
+/* ── the gathered package, under the conversation ───────────────────────────── */
 /* Loom's own colours: this block is a turn in the conversation, not a console. */
 .pp-pkg {
   border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: var(--radius);
