@@ -117,6 +117,7 @@ import {
   syncDock,
   undrawnEchoes,
 } from "./composer.ts";
+import { mountPreprompt } from "./preprompt.ts";
 import { sameBundle, styleHashOf } from "./bundle.ts";
 import { isPoint, pointClass, pointLabel, type TurnFacts } from "./gutter.ts";
 import {
@@ -5418,4 +5419,25 @@ void boot().catch((error: unknown) => {
     return;
   }
   setStatus(String(error), "error");
+});
+
+// ── preprompt: gather first, send second ──────────────────────────────────────
+// The button sits beside Send and takes the same text: what you were about to ask is exactly
+// the brief a gatherer needs. Nothing is sent to the session until you press Accept on the card.
+const prepromptPanel = mountPreprompt(ui.preprompt, (text) => {
+  ui.composerText.value = text;
+  ui.composerText.focus();
+});
+ui.composerGather.addEventListener("click", () => {
+  const text = ui.composerText.value.trim();
+  // Both of these used to return silently, which is indistinguishable from a dead button.
+  if (text === "") {
+    toast("gather: write the question in the composer first");
+    return;
+  }
+  // Gather where the session would run, not at the top of the vault: a record open in the UI
+  // means the question is about that project, and a whole-vault scan answers a different one.
+  const recordRoot = state.activeRecord === null ? null : dirOfRecord(state.activeRecord);
+  const roots = recordRoot === null ? [] : [recordRoot];
+  void prepromptPanel.gather(state.sessionId, text, roots);
 });

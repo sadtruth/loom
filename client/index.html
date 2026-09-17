@@ -77,7 +77,8 @@
           <!-- Two rows, VS Code's shape: the text you are writing, then a toolbar under it. One row
                put seven controls beside the textarea, so on a phone the send button sat 280px off the
                right edge of the screen (measured 2026-08-06). -->
-          <form id="composer">
+          <aside id="preprompt" hidden></aside>
+        <form id="composer">
             <!-- Inside the docking element, not above it (SPEC 199): a thumbnail strip left behind
                  while its composer docks is a draft with no way back to it. -->
             <div id="attachments" hidden></div>
@@ -112,6 +113,7 @@
                  opens a seam and starts a fresh session in the same train. The MARK that reports the
                  accounting left for the column's foot with the block meter (SPEC 186). -->
             <button id="composer-new" type="button" title="Start a new session in this project — it joins the same train, one seam below" hidden>start a new one</button>
+            <button id="composer-gather" type="button" title="Gather context with a cheap model before you send">gather</button>
             <button id="composer-stop" type="button" title="Stop this turn — anything queued behind it still runs" hidden>stop</button>
             <button id="composer-send" type="submit" title="Send">send</button>
           </div>
