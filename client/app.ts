@@ -5424,11 +5424,11 @@ void boot().catch((error: unknown) => {
 // ── preprompt: gather first, send second ──────────────────────────────────────
 // The button sits beside Send and takes the same text: what you were about to ask is exactly
 // the brief a gatherer needs. Nothing is sent to the session until you press Accept on the card.
-const prepromptPanel = mountPreprompt(ui.preprompt, (text) => {
+const prepromptPanel = mountPreprompt(ui.transcript, (text) => {
   ui.composerText.value = text;
   ui.composerText.focus();
 });
-ui.composerGather.addEventListener("click", () => {
+function startGather(): void {
   const text = ui.composerText.value.trim();
   // Both of these used to return silently, which is indistinguishable from a dead button.
   if (text === "") {
@@ -5440,4 +5440,15 @@ ui.composerGather.addEventListener("click", () => {
   const recordRoot = state.activeRecord === null ? null : dirOfRecord(state.activeRecord);
   const roots = recordRoot === null ? [] : [recordRoot];
   void prepromptPanel.gather(state.sessionId, text, roots);
+}
+
+ui.composerGather.addEventListener("click", startGather);
+// The composer's own shortcut, as designed: Enter sends, Ctrl+Shift+Enter gathers.
+ui.composerText.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && event.shiftKey && (event.ctrlKey || event.metaKey)) {
+    event.preventDefault();
+    startGather();
+  }
 });
+// A reload loses the page's memory of running gathers, not the gathers themselves.
+void prepromptPanel.reattach(state.sessionId);

@@ -186,7 +186,6 @@ export const ui = {
   composerSend: need<HTMLButtonElement>("composer-send"),
   composerStop: need<HTMLButtonElement>("composer-stop"),
   composerGather: need<HTMLButtonElement>("composer-gather"),
-  preprompt: need<HTMLElement>("preprompt"),
   composerAttach: need<HTMLButtonElement>("composer-attach"),
   attachInput: need<HTMLInputElement>("attach-input"),
   attachments: need<HTMLElement>("attachments"),

@@ -515,6 +515,7 @@ async function carsFor(recordPath: string): Promise<TrainCar[]> {
 type Routes =
   | "/api/sessions/:id/preprompt"
   | "/api/preprompt"
+  | "/api/preprompt/:jobId/package"
   | "/api/preprompt/:jobId/events"
   | "/api/preprompt/:jobId/gap"
   | "/api/preprompt/:jobId/accept"
@@ -1604,6 +1605,19 @@ const server = Bun.serve<SocketData, Routes>({
     // session id. Accepting such a job hands the text back instead of sending it: the session it
     // belongs to is the one you start by pressing send on it.
     "/api/preprompt": {
+      GET: (req) => {
+        const denied = requireAuth(req);
+        if (denied !== null) return denied;
+        const session = new URL(req.url).searchParams.get("session") ?? "";
+        const jobs = (session === "" ? preprompt.all() : preprompt.forSession(session)).map((job) => ({
+          jobId: job.jobId,
+          slug: job.slug,
+          prompt: job.prompt,
+          state: job.state,
+          sessionId: job.sessionId,
+        }));
+        return json({ jobs });
+      },
       POST: async (req) => {
         const denied = requireAuth(req);
         if (denied !== null) return denied;
@@ -1687,6 +1701,19 @@ const server = Bun.serve<SocketData, Routes>({
             connection: "keep-alive",
           },
         });
+      },
+    },
+
+    // What Accept would send, and what has been gathered so far. Both exist so the panel can
+    // show the package BEFORE it is accepted: a button that sends something you cannot read is
+    // not a decision, it is a dice roll.
+    "/api/preprompt/:jobId/package": {
+      GET: async (req) => {
+        const denied = requireAuth(req);
+        if (denied !== null) return denied;
+        const job = preprompt.get(req.params.jobId);
+        if (job === undefined) return json({ error: "no such job" }, 404);
+        return json({ text: await preprompt.message(job), artifact: await preprompt.artifact(job) });
       },
     },
 

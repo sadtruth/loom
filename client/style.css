@@ -3025,28 +3025,55 @@ button.seam-open:hover { background: var(--bg-sunken); color: var(--ink); }
    the window for anything that does not support it. */
 #composer-text { field-sizing: content; max-height: 40vh; }
 
-/* ── preprompt panel ───────────────────────────────────────────────────────── */
-/* A column of its own on the right: a gather is something you watch while the session runs,
-   so it must not push the conversation around while it grows. */
-#preprompt {
-  position: fixed; top: 0; right: 0; bottom: 0; width: 380px; z-index: 40;
-  overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px;
-  background: rgba(16, 18, 22, 0.96); border-left: 1px solid #2a2f37;
+/* ── the gathered package, inside the transcript ───────────────────────────── */
+/* Loom's own colours: this block is a turn in the conversation, not a console. */
+.pp-pkg {
+  border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: var(--radius);
+  background: var(--bg-raised); margin: 14px 0; padding: 12px 14px; font-family: var(--sans);
 }
-#preprompt[hidden] { display: none; }
-.pp-card { border: 1px solid #2a2f37; border-radius: 6px; background: #191c21; padding: 10px; }
-.pp-card.pp-done { border-color: #3d6b4a; }
-.pp-card.pp-failed { border-color: #7a3b3b; }
-.pp-card.pp-sent { opacity: 0.6; }
-.pp-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
-.pp-state { font-weight: 600; color: #d7dbe0; }
-.pp-slug { font-size: 11px; color: #7d8794; }
-.pp-question { margin: 6px 0; color: #b9c1cc; font-size: 13px; }
-.pp-meta { font-size: 11px; color: #8a93a0; margin-bottom: 6px; }
-.pp-log { max-height: 240px; overflow-y: auto; margin: 0 0 8px; padding-left: 18px; }
-.pp-cmd { font: 11px/1.5 ui-monospace, Menlo, monospace; color: #9aa4b0; word-break: break-all; }
-.pp-cmd.pp-refused { color: #d08b6a; }
-.pp-cmd.pp-note-line { color: #86b6e0; }
-.pp-buttons { display: flex; gap: 6px; flex-wrap: wrap; }
-.pp-buttons button { font-size: 12px; padding: 4px 8px; }
-.pp-note { color: #d08b6a; font-size: 12px; }
+.pp-pkg.pp-ready { border-left-color: var(--user); }
+.pp-pkg.pp-failed { border-left-color: var(--error); }
+.pp-pkg.pp-sent { opacity: 0.75; }
+.pp-pkg-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.pp-badge {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--accent);
+  font-weight: 600;
+}
+.pp-status { font-size: 13px; color: var(--ink); }
+.pp-meta { margin-left: auto; font-size: 12px; color: var(--ink-dim); font-family: var(--mono); }
+.pp-task {
+  margin: 8px 0; padding-left: 10px; border-left: 2px solid var(--line-soft);
+  color: var(--ink); font-size: 14px;
+}
+.pp-band { margin: 10px 0 6px; font-size: 13px; color: var(--ink-dim); }
+.pp-cmd { margin: 0 0 10px; }
+.pp-cmd-line { display: flex; gap: 10px; align-items: baseline; }
+.pp-cmd-text { font-family: var(--mono); font-size: 12.5px; color: var(--ink); word-break: break-all; }
+.pp-cmd-at { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); margin-left: auto; }
+.pp-cmd-out {
+  margin: 4px 0 0; padding: 8px 10px; background: var(--bg); border: 1px solid var(--line-soft);
+  border-radius: 5px; font-family: var(--mono); font-size: 12px; color: var(--ink-dim);
+  white-space: pre-wrap; word-break: break-word; max-height: 320px; overflow: auto;
+}
+.pp-cmd-refused .pp-cmd-text { color: var(--warn); }
+.pp-refused-out { color: var(--warn); }
+.pp-notes { margin: 10px 0; }
+.pp-notes-head { font-size: 13px; color: var(--ink); }
+.pp-note { margin: 4px 0; font-size: 14px; color: var(--ink); }
+.pp-package { margin: 10px 0; }
+.pp-package summary { cursor: pointer; font-size: 13px; color: var(--accent); }
+.pp-package-text {
+  margin: 8px 0 0; padding: 10px; background: var(--bg); border: 1px solid var(--line-soft);
+  border-radius: 5px; font-family: var(--mono); font-size: 12px; color: var(--ink);
+  white-space: pre-wrap; max-height: 420px; overflow: auto;
+}
+.pp-ask {
+  width: 100%; box-sizing: border-box; margin: 6px 0; padding: 6px 8px; font-family: var(--sans);
+  font-size: 13px; border: 1px solid var(--line); border-radius: 5px; background: var(--bg);
+  color: var(--ink);
+}
+.pp-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+.pp-complaint {
+  margin: 10px 0; padding: 8px 10px; border: 1px solid var(--warn); border-radius: var(--radius);
+  color: var(--warn); font-size: 13px; background: var(--bg-raised);
+}

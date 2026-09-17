@@ -1,13 +1,16 @@
-/** The preprompt panel: a cheap model gathers context beside the session, and you decide what
- *  reaches the expensive one.
+/** The gathered package, drawn in the transcript under the question that started it.
  *
- * One card per job, newest first. The card shows what the gather is doing WHILE it does it -
- * the commands as they run, the step count, the tokens - because the whole point of gathering
- * in a child process is that you can watch it and stop it, not wait blind for a result.
+ * It lives in the conversation and not in a side rail, because it IS a turn: a cheap model read
+ * the tree and this is what it found. You read it where you read everything else, and then you
+ * decide whether the expensive model gets it.
  *
- * Three buttons, which are the three things you can want: send it into the session, ask for
- * another round on the same artifact, or throw it away. Nothing here writes to the transcript;
- * Accept posts to the server, which sends the message the way a typed one goes.
+ * What it shows, and why each part is there:
+ *   - every command with the time it ran and its COMPLETE output. A list of command names tells
+ *     you a model was busy; the output is the only thing that tells you whether it found anything.
+ *     No durations - they say nothing about the answer.
+ *   - the model's own reading, in its words, so you can see what it thinks it learned.
+ *   - the package itself, before you accept it: a button that sends something you cannot read is
+ *     not a decision.
  */
 
 export interface GatherHandle {
@@ -15,37 +18,62 @@ export interface GatherHandle {
   slug: string;
 }
 
-interface CardParts {
+interface Card {
   root: HTMLElement;
-  state: HTMLElement;
-  meta: HTMLElement;
-  log: HTMLElement;
+  status: HTMLElement;
+  head: HTMLElement;
+  band: HTMLElement;
+  commands: HTMLElement;
+  notes: HTMLElement;
+  packageBox: HTMLDetailsElement;
+  packageText: HTMLElement;
+  ask: HTMLTextAreaElement;
   accept: HTMLButtonElement;
   more: HTMLButtonElement;
   discard: HTMLButtonElement;
+  started: number;
+  model: string;
+  step: number;
+  tokensIn: number;
+  tokensOut: number;
+  timer: ReturnType<typeof setInterval> | null;
 }
 
-function element<K extends keyof HTMLElementTagNameMap>(
+function node<K extends keyof HTMLElementTagNameMap>(
   tag: K,
   className: string,
   text = "",
 ): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag);
-  node.className = className;
-  if (text !== "") node.textContent = text;
-  return node;
+  const element = document.createElement(tag);
+  if (className !== "") element.className = className;
+  if (text !== "") element.textContent = text;
+  return element;
+}
+
+const STEP_CEILING = 25;
+
+function clock(ms: number): string {
+  const seconds = Math.floor(ms / 1000);
+  return seconds < 60
+    ? `${seconds}s`
+    : `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, "0")}s`;
+}
+
+function hhmmss(iso: string): string {
+  if (iso === "") return "";
+  const when = new Date(iso);
+  return Number.isNaN(when.getTime()) ? "" : when.toTimeString().slice(0, 8);
 }
 
 export class PrepromptPanel {
-  private cards = new Map<string, CardParts>();
+  private cards = new Map<string, Card>();
 
   constructor(
-    private host: HTMLElement,
+    private transcript: HTMLElement,
     /** Where an accepted package goes when there is no session to send it to. */
     private toComposer: (text: string) => void = () => {},
   ) {}
 
-  /** Start a round and show its card. The prompt is the text the composer had. */
   async gather(sessionId: string, prompt: string, roots: string[] = []): Promise<GatherHandle | null> {
     const url =
       sessionId === "" ? "/api/preprompt" : `/api/sessions/${encodeURIComponent(sessionId)}/preprompt`;
@@ -56,93 +84,157 @@ export class PrepromptPanel {
     });
     if (!response.ok) {
       const said = await response.text().catch(() => "");
-      this.note(
+      this.complain(
         response.status === 401 || response.status === 403
-          ? "gather refused: this browser is not signed in to loom - open the /login?token= link once"
+          ? "gather refused: this browser is not signed in to loom — open the /login?token= link once"
           : `gather refused: ${response.status} ${said.slice(0, 200)}`,
       );
       return null;
     }
     const handle = (await response.json()) as GatherHandle;
-    const card = this.card(handle, prompt);
-    this.listen(handle, card);
+    this.listen(handle, this.draw(handle, prompt));
     return handle;
   }
 
-  private note(text: string): void {
-    // The panel starts hidden, so a note prepended to a hidden panel is a failure nobody sees.
-    // That is exactly what happened on 2026-09-17: an unauthenticated browser pressed gather,
-    // the POST came back 401, and the button looked broken instead of refused.
-    const line = element("div", "pp-note", text);
-    this.host.hidden = false;
-    this.host.prepend(line);
-    setTimeout(() => {
-      line.remove();
-      if (this.host.childElementCount === 0) this.host.hidden = true;
-    }, 10000);
+  /** After a reload the children are still running; the page just forgot about them. */
+  async reattach(sessionId: string): Promise<void> {
+    const query = sessionId === "" ? "" : `?session=${encodeURIComponent(sessionId)}`;
+    const response = await fetch(`/api/preprompt${query}`);
+    if (!response.ok) return;
+    const body = (await response.json()) as {
+      jobs?: { jobId: string; slug: string; prompt: string; state: string }[];
+    };
+    for (const job of body.jobs ?? []) {
+      if (this.cards.has(job.jobId)) continue;
+      const handle = { jobId: job.jobId, slug: job.slug };
+      this.listen(handle, this.draw(handle, job.prompt));
+    }
   }
 
-  private card(handle: GatherHandle, prompt: string): CardParts {
-    const root = element("section", "pp-card");
-    const head = element("header", "pp-head");
-    const state = element("span", "pp-state", "gathering");
-    head.append(state, element("span", "pp-slug", handle.slug));
-    const question = element("div", "pp-question", prompt);
-    const meta = element("div", "pp-meta", "no commands yet");
-    const log = element("ol", "pp-log");
+  private complain(text: string): void {
+    const line = node("div", "pp-complaint", text);
+    this.transcript.append(line);
+    line.scrollIntoView({ block: "nearest" });
+    setTimeout(() => line.remove(), 12000);
+  }
 
-    const buttons = element("div", "pp-buttons");
-    const accept = element("button", "pp-accept", "Accept into session");
-    const more = element("button", "pp-more", "Ask for more");
-    const discard = element("button", "pp-discard", "Discard");
-    accept.type = "button";
-    more.type = "button";
-    discard.type = "button";
+  private draw(handle: GatherHandle, prompt: string): Card {
+    const root = node("article", "pp-pkg");
+    root.dataset["job"] = handle.jobId;
+
+    const head = node("header", "pp-pkg-head");
+    const badge = node("span", "pp-badge", "gathered context");
+    const status = node("span", "pp-status", "gathering");
+    head.append(badge, status);
+
+    const task = node("blockquote", "pp-task", prompt);
+    const band = node("p", "pp-band", "a cheap model is reading the tree for this question");
+    const commands = node("div", "pp-cmds");
+    const notes = node("div", "pp-notes");
+
+    const packageBox = document.createElement("details");
+    packageBox.className = "pp-package";
+    const summary = document.createElement("summary");
+    summary.textContent = "what Accept will send — nothing gathered yet";
+    const packageText = node("pre", "pp-package-text");
+    packageBox.append(summary, packageText);
+
+    const ask = document.createElement("textarea");
+    ask.className = "pp-ask";
+    ask.rows = 2;
+    ask.placeholder = "what else should it look for? (Ask for more runs another round on the same artifact)";
+
+    const buttons = node("div", "pp-buttons");
+    const accept = node("button", "pp-accept", "Accept → send");
+    const more = node("button", "pp-more", "Ask for more");
+    const discard = node("button", "pp-discard", "Discard");
+    for (const button of [accept, more, discard]) button.type = "button";
     buttons.append(accept, more, discard);
 
-    root.append(head, question, meta, log, buttons);
-    this.host.prepend(root);
-    this.host.hidden = false;
+    root.append(head, task, band, commands, notes, packageBox, ask, buttons);
+    this.transcript.append(root);
+    root.scrollIntoView({ block: "end", behavior: "smooth" });
 
-    const parts: CardParts = { root, state, meta, log, accept, more, discard };
-    this.cards.set(handle.jobId, parts);
+    const card: Card = {
+      root,
+      status,
+      head,
+      band,
+      commands,
+      notes,
+      packageBox,
+      packageText,
+      ask,
+      accept,
+      more,
+      discard,
+      started: Date.now(),
+      model: "",
+      step: 0,
+      tokensIn: 0,
+      tokensOut: 0,
+      timer: null,
+    };
+    this.cards.set(handle.jobId, card);
 
-    accept.addEventListener("click", () => void this.accept(handle, parts));
-    more.addEventListener("click", () => void this.more(handle, parts));
-    discard.addEventListener("click", () => void this.discard(handle, parts));
-    return parts;
+    card.timer = setInterval(() => this.head(card), 1000);
+    this.head(card);
+
+    accept.addEventListener("click", () => void this.accept(handle, card));
+    more.addEventListener("click", () => void this.more(handle, card));
+    discard.addEventListener("click", () => void this.discard(handle, card));
+    return card;
   }
 
-  /** The stream carries the history first, so a panel opened late is not a panel that missed it. */
-  private listen(handle: GatherHandle, card: CardParts): void {
-    const source = new EventSource(`/api/preprompt/${handle.jobId}/events`);
-    let commands = 0;
-    let step = 0;
-    let tokens = { in: 0, out: 0 };
-    let model = "";
+  /** One line of plain facts, each labelled: an unlabelled number is a number nobody can use. */
+  private head(card: Card): void {
+    const bits: string[] = [];
+    if (card.model !== "") bits.push(card.model);
+    bits.push(`step ${card.step} of ${STEP_CEILING}`);
+    if (card.tokensIn > 0) {
+      bits.push(
+        `${card.tokensIn.toLocaleString()} tokens read · ${card.tokensOut.toLocaleString()} written`,
+      );
+    }
+    bits.push(clock(Date.now() - card.started));
+    let meta = card.head.querySelector<HTMLElement>(".pp-meta");
+    if (meta === null) {
+      meta = node("span", "pp-meta");
+      card.head.append(meta);
+    }
+    meta.textContent = bits.join("  ·  ");
+  }
 
-    const meta = () => {
-      const bits = [`${commands} commands`, `step ${step}`];
-      if (model !== "") bits.push(model);
-      if (tokens.in > 0) bits.push(`${tokens.in} in / ${tokens.out} out`);
-      card.meta.textContent = bits.join("  ·  ");
-    };
+  private listen(handle: GatherHandle, card: Card): void {
+    const source = new EventSource(`/api/preprompt/${handle.jobId}/events`);
 
     source.addEventListener("command", (event) => {
       const data = JSON.parse((event as MessageEvent).data) as {
+        n: number;
         command: string;
+        at: string;
         exitCode: number | null;
-        durationMs: number;
         refused: string;
+        output: string;
+        stderr: string;
       };
-      commands += 1;
-      const line = element("li", data.refused ? "pp-cmd pp-refused" : "pp-cmd");
-      line.textContent = data.refused
-        ? `${data.command} - refused: ${data.refused.slice(0, 120)}`
-        : `${data.command}  (${data.durationMs}ms)`;
-      card.log.append(line);
-      card.log.scrollTop = card.log.scrollHeight;
-      meta();
+      const block = node("div", data.refused === "" ? "pp-cmd" : "pp-cmd pp-cmd-refused");
+      const line = node("div", "pp-cmd-line");
+      line.append(node("code", "pp-cmd-text", data.command), node("time", "pp-cmd-at", hhmmss(data.at)));
+      block.append(line);
+      if (data.refused !== "") {
+        block.append(node("pre", "pp-cmd-out pp-refused-out", data.refused));
+      } else {
+        const body =
+          data.output.trim() === ""
+            ? data.stderr.trim() === ""
+              ? "(no output)"
+              : data.stderr
+            : data.output;
+        block.append(node("pre", "pp-cmd-out", body));
+      }
+      card.commands.append(block);
+      card.band.textContent = `${card.model === "" ? "a cheap model" : card.model} ran these commands to gather context:`;
     });
 
     source.addEventListener("step", (event) => {
@@ -152,90 +244,123 @@ export class PrepromptPanel {
         promptTokens: number;
         completionTokens: number;
       };
-      step = data.step;
-      tokens = { in: data.promptTokens, out: data.completionTokens };
-      if (data.model) model = data.model;
-      meta();
+      card.step = data.step;
+      card.tokensIn = data.promptTokens;
+      card.tokensOut = data.completionTokens;
+      if (data.model) card.model = data.model;
+      this.head(card);
     });
 
     source.addEventListener("note", (event) => {
       const data = JSON.parse((event as MessageEvent).data) as { text: string };
-      const line = element("li", "pp-cmd pp-note-line", `note: ${data.text}`);
-      card.log.append(line);
+      if (card.notes.childElementCount === 0) {
+        card.notes.append(
+          node("b", "pp-notes-head", `${card.model === "" ? "the model" : card.model} says:`),
+        );
+      }
+      card.notes.append(node("p", "pp-note", data.text));
     });
+
+    source.addEventListener("artifact-updated", () => void this.refreshPackage(handle, card));
 
     source.addEventListener("done", (event) => {
       const data = JSON.parse((event as MessageEvent).data) as { stopReason: string };
-      card.state.textContent = "ready";
-      card.root.classList.add("pp-done");
-      card.meta.textContent = `${card.meta.textContent}  ·  ${data.stopReason}`;
+      card.status.textContent = data.stopReason.includes("ceiling")
+        ? "ready — it stopped at the step limit, not because it was finished"
+        : "ready";
+      card.root.classList.add("pp-ready");
+      card.band.title = data.stopReason;
+      if (card.timer !== null) clearInterval(card.timer);
+      card.timer = null;
+      this.head(card);
+      void this.refreshPackage(handle, card);
       source.close();
     });
 
     source.addEventListener("error", (event) => {
-      // Two different errors arrive here: the server's own "error" event, which carries a
-      // message, and the browser's transport error, which carries nothing. Only the first is
-      // worth showing; the second happens on every normal close.
       const raw = (event as MessageEvent).data;
       if (typeof raw !== "string") return;
       const data = JSON.parse(raw) as { message: string };
-      card.state.textContent = "failed";
+      card.status.textContent = `failed: ${data.message}`;
       card.root.classList.add("pp-failed");
-      card.meta.textContent = data.message;
+      if (card.timer !== null) clearInterval(card.timer);
+      card.timer = null;
       source.close();
     });
   }
 
-  private async accept(handle: GatherHandle, card: CardParts): Promise<void> {
+  /** The package, exactly as Accept would send it. Read before you send, not after. */
+  private async refreshPackage(handle: GatherHandle, card: Card): Promise<void> {
+    const response = await fetch(`/api/preprompt/${handle.jobId}/package`);
+    if (!response.ok) return;
+    const body = (await response.json()) as { text?: string };
+    const text = body.text ?? "";
+    card.packageText.textContent = text;
+    const summary = card.packageBox.querySelector("summary");
+    if (summary !== null) {
+      summary.textContent =
+        text.trim() === ""
+          ? "what Accept will send — nothing gathered yet"
+          : `what Accept will send — ${text.length.toLocaleString()} characters`;
+    }
+  }
+
+  private async accept(handle: GatherHandle, card: Card): Promise<void> {
     card.accept.disabled = true;
     const response = await fetch(`/api/preprompt/${handle.jobId}/accept`, { method: "POST" });
     if (response.status === 204) {
-      card.state.textContent = "sent";
+      card.status.textContent = "sent into the session";
       card.root.classList.add("pp-sent");
       return;
     }
     if (response.ok) {
-      // No session yet: the package lands in the composer and you send it yourself.
       const body = (await response.json()) as { text?: string };
       if (typeof body.text === "string") {
         this.toComposer(body.text);
-        card.state.textContent = "in the composer";
+        card.status.textContent = "in the composer — press send";
         card.root.classList.add("pp-sent");
         return;
       }
     }
     card.accept.disabled = false;
-    card.meta.textContent = `accept failed: ${response.status}`;
+    card.status.textContent = `accept failed: ${response.status}`;
   }
 
-  private async more(handle: GatherHandle, card: CardParts): Promise<void> {
-    const text = window.prompt("What else should it look for?");
-    if (text === null || text.trim() === "") return;
+  private async more(handle: GatherHandle, card: Card): Promise<void> {
+    const text = card.ask.value.trim();
+    if (text === "") {
+      card.ask.focus();
+      card.status.textContent = "write what else it should look for, then press Ask for more";
+      return;
+    }
     const response = await fetch(`/api/preprompt/${handle.jobId}/gap`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text }),
     });
     if (!response.ok) {
-      card.meta.textContent = `another round refused: ${response.status}`;
+      card.status.textContent = `another round refused: ${response.status}`;
       return;
     }
-    card.state.textContent = "gathering";
-    card.root.classList.remove("pp-done");
+    card.ask.value = "";
+    card.status.textContent = "gathering";
+    card.root.classList.remove("pp-ready");
+    card.started = Date.now();
+    if (card.timer === null) card.timer = setInterval(() => this.head(card), 1000);
     this.listen(handle, card);
   }
 
-  private async discard(handle: GatherHandle, card: CardParts): Promise<void> {
+  private async discard(handle: GatherHandle, card: Card): Promise<void> {
     await fetch(`/api/preprompt/${handle.jobId}`, { method: "DELETE" });
+    if (card.timer !== null) clearInterval(card.timer);
     card.root.remove();
     this.cards.delete(handle.jobId);
-    if (this.cards.size === 0) this.host.hidden = true;
   }
 }
 
 export function mountPreprompt(
-  host: HTMLElement,
+  transcript: HTMLElement,
   toComposer: (text: string) => void = () => {},
 ): PrepromptPanel {
-  return new PrepromptPanel(host, toComposer);
+  return new PrepromptPanel(transcript, toComposer);
 }

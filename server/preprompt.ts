@@ -30,6 +30,8 @@ export interface PrepromptEvent {
 export interface PrepromptJob {
   jobId: string;
   slug: string;
+  /** The question, kept so a page that reloads can redraw the package it belongs to. */
+  prompt: string;
   sessionId: string;
   runDir: string;
   state: PrepromptState;
@@ -97,6 +99,11 @@ export class Preprompt {
     return this.jobs.get(jobId);
   }
 
+  /** Every job this server knows about, including the ones that belong to no session yet. */
+  all(): PrepromptJob[] {
+    return [...this.jobs.values()];
+  }
+
   /** Jobs for one session, oldest first. Many rounds of gathering per session is the normal case. */
   forSession(sessionId: string): PrepromptJob[] {
     return [...this.jobs.values()].filter((job) => job.sessionId === sessionId);
@@ -107,6 +114,7 @@ export class Preprompt {
     const job: PrepromptJob = {
       jobId: jobId(),
       slug,
+      prompt,
       sessionId,
       runDir: join(this.options.runsDir, slug),
       state: "running",
@@ -137,6 +145,15 @@ export class Preprompt {
     this.watch(job);
     void job.child.exited.then((code) => this.finish(job, code));
     return { ok: true };
+  }
+
+  /** The artifact as it stands, for showing what has been gathered so far. */
+  async artifact(job: PrepromptJob): Promise<string> {
+    try {
+      return await readFile(join(job.runDir, "artifact.md"), "utf8");
+    } catch {
+      return "";
+    }
   }
 
   /** The paste-ready message, from the runner itself: this module never renders it. */
@@ -213,20 +230,32 @@ export class Preprompt {
       const notes = (run["notes"] ?? []) as unknown[];
 
       for (const entry of evidence.slice(job.seen.commands)) {
+        // The output is the point: a log of command names tells you a model was busy, not what
+        // it found. Duration is deliberately absent - it was dropped in the design conversation.
+        const refused = String(entry["refused"] ?? "");
         this.emit(job, {
           event: "command",
           data: {
+            n: entry["n"] ?? job.seen.commands + 1,
             command: entry["command"] ?? "",
+            at: entry["at"] ?? "",
             exitCode: entry["exitCode"] ?? null,
-            durationMs: entry["durationMs"] ?? 0,
-            refused: entry["refused"] ?? "",
+            refused,
+            output: refused.length > 0 ? "" : String(entry["stdout"] ?? ""),
+            stderr: String(entry["stderr"] ?? "").slice(0, 2000),
           },
         });
       }
       job.seen.commands = evidence.length;
 
       for (const note of notes.slice(job.seen.notes)) {
-        this.emit(job, { event: "note", data: { text: String(note) } });
+        // A note is `{ round, text }` in run.json. Stringifying it gave "[object Object]" in the
+        // panel, which is how the model's own reading reached the user as nothing at all.
+        const text =
+          typeof note === "string"
+            ? note
+            : String((note as Record<string, unknown>)["text"] ?? JSON.stringify(note));
+        this.emit(job, { event: "note", data: { text } });
       }
       job.seen.notes = notes.length;
 
