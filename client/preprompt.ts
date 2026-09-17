@@ -265,10 +265,21 @@ export class PrepromptPanel {
 
     source.addEventListener("done", (event) => {
       const data = JSON.parse((event as MessageEvent).data) as { stopReason: string };
-      card.status.textContent = data.stopReason.includes("ceiling")
-        ? "ready — it stopped at the step limit, not because it was finished"
-        : "ready";
-      card.root.classList.add("pp-ready");
+      // "ready" is a claim about the result, so it has to be earned. A run whose model died on
+      // its second call still ends with exit 0 and an artifact of 790 bytes; calling that ready
+      // is how you get handed nothing and told it is something.
+      const gathered = card.commands.childElementCount;
+      const failedEarly = /returned nothing|malformed|no choices|rate limit/i.test(data.stopReason);
+      if (gathered === 0 || failedEarly) {
+        card.status.textContent = `stopped without gathering much — ${data.stopReason}`;
+        card.root.classList.add("pp-failed");
+      } else if (data.stopReason.includes("ceiling")) {
+        card.status.textContent = "ready — it stopped at the step limit, not because it was finished";
+        card.root.classList.add("pp-ready");
+      } else {
+        card.status.textContent = `ready — ${data.stopReason}`;
+        card.root.classList.add("pp-ready");
+      }
       card.band.title = data.stopReason;
       if (card.timer !== null) clearInterval(card.timer);
       card.timer = null;
