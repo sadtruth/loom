@@ -5424,7 +5424,10 @@ void boot().catch((error: unknown) => {
 // ── preprompt: gather first, send second ──────────────────────────────────────
 // The button sits beside Send and takes the same text: what you were about to ask is exactly
 // the brief a gatherer needs. Nothing is sent to the session until you press Accept on the card.
-const prepromptPanel = mountPreprompt(ui.transcript, (text) => {
+// Its own strip between the transcript and the composer. The transcript belongs to loom and is
+// rebuilt when the session redraws, which silently removed the package that had been appended to
+// it - including after a reload, which is exactly when you most want it back.
+const prepromptPanel = mountPreprompt(ui.prepromptFlow, (text) => {
   ui.composerText.value = text;
   ui.composerText.focus();
 });
@@ -5451,4 +5454,4 @@ ui.composerText.addEventListener("keydown", (event) => {
   }
 });
 // A reload loses the page's memory of running gathers, not the gathers themselves.
-void prepromptPanel.reattach(state.sessionId);
+void prepromptPanel.reattach();

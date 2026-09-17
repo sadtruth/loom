@@ -97,7 +97,7 @@ export class PrepromptPanel {
   }
 
   /** After a reload the children are still running; the page just forgot about them. */
-  async reattach(sessionId: string): Promise<void> {
+  async reattach(): Promise<void> {
     // Ask for all of them and filter here. A gather started before the session existed belongs
     // to no session, and asking the server "which are mine?" loses exactly those - the ones the
     // feature is for.
@@ -115,7 +115,9 @@ export class PrepromptPanel {
     };
     for (const job of body.jobs ?? []) {
       if (this.cards.has(job.jobId)) continue;
-      if (job.sessionId !== "" && job.sessionId !== sessionId) continue;
+      // No session filter. At page load the session id is not resolved yet, so filtering by it
+      // dropped every job that HAS one - which is most of them - and the reload redrew nothing.
+      // Few jobs are ever open at once, and each card names the question it came from.
       // Only what still wants a decision: a live gather, or a finished one you have not sent or
       // thrown away. Redrawing every job the server remembers turns a reload into a pile of old
       // packages you already dealt with.
