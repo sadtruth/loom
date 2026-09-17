@@ -98,14 +98,28 @@ export class PrepromptPanel {
 
   /** After a reload the children are still running; the page just forgot about them. */
   async reattach(sessionId: string): Promise<void> {
-    const query = sessionId === "" ? "" : `?session=${encodeURIComponent(sessionId)}`;
-    const response = await fetch(`/api/preprompt${query}`);
+    // Ask for all of them and filter here. A gather started before the session existed belongs
+    // to no session, and asking the server "which are mine?" loses exactly those - the ones the
+    // feature is for.
+    const response = await fetch("/api/preprompt");
     if (!response.ok) return;
     const body = (await response.json()) as {
-      jobs?: { jobId: string; slug: string; prompt: string; state: string }[];
+      jobs?: {
+        jobId: string;
+        slug: string;
+        prompt: string;
+        state: string;
+        accepted: boolean;
+        sessionId: string;
+      }[];
     };
     for (const job of body.jobs ?? []) {
       if (this.cards.has(job.jobId)) continue;
+      if (job.sessionId !== "" && job.sessionId !== sessionId) continue;
+      // Only what still wants a decision: a live gather, or a finished one you have not sent or
+      // thrown away. Redrawing every job the server remembers turns a reload into a pile of old
+      // packages you already dealt with.
+      if (job.accepted) continue;
       const handle = { jobId: job.jobId, slug: job.slug };
       this.listen(handle, this.draw(handle, job.prompt));
     }
@@ -149,6 +163,9 @@ export class PrepromptPanel {
     const more = node("button", "pp-more", "Ask for more");
     const discard = node("button", "pp-discard", "Discard");
     for (const button of [accept, more, discard]) button.type = "button";
+    // Another round on a job that is still gathering is refused by the server anyway; saying so
+    // with the button costs nothing and does not depend on a network round trip to find out.
+    more.disabled = true;
     buttons.append(accept, more, discard);
 
     root.append(head, task, band, commands, notes, packageBox, ask, buttons);
@@ -280,6 +297,7 @@ export class PrepromptPanel {
         card.status.textContent = `ready — ${data.stopReason}`;
         card.root.classList.add("pp-ready");
       }
+      card.more.disabled = false;
       card.band.title = data.stopReason;
       if (card.timer !== null) clearInterval(card.timer);
       card.timer = null;
@@ -294,6 +312,7 @@ export class PrepromptPanel {
       const data = JSON.parse(raw) as { message: string };
       card.status.textContent = `failed: ${data.message}`;
       card.root.classList.add("pp-failed");
+      card.more.disabled = false;
       if (card.timer !== null) clearInterval(card.timer);
       card.timer = null;
       source.close();
@@ -325,10 +344,10 @@ export class PrepromptPanel {
       return;
     }
     if (response.ok) {
-      const body = (await response.json()) as { text?: string };
+      const body = (await response.json()) as { text?: string; why?: string };
       if (typeof body.text === "string") {
         this.toComposer(body.text);
-        card.status.textContent = "in the composer — press send";
+        card.status.textContent = body.why ?? "in the composer — press send";
         card.root.classList.add("pp-sent");
         return;
       }
@@ -354,6 +373,11 @@ export class PrepromptPanel {
       return;
     }
     card.ask.value = "";
+    // The stream replays the job's whole history to every new reader, so the commands already on
+    // screen would be appended a second time. Clear, and let the replay redraw them once.
+    card.commands.replaceChildren();
+    card.notes.replaceChildren();
+    card.more.disabled = true;
     card.status.textContent = "gathering";
     card.root.classList.remove("pp-ready");
     card.started = Date.now();

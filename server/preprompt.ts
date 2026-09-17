@@ -89,6 +89,7 @@ export function slugFor(sessionId: string, now = new Date()): string {
 
 export class Preprompt {
   private jobs = new Map<string, PrepromptJob>();
+  private packages = new Map<string, { stamp: string; text: string }>();
   private readonly pollMs: number;
 
   constructor(private options: PrepromptOptions) {
@@ -156,8 +157,30 @@ export class Preprompt {
     }
   }
 
-  /** The paste-ready message, from the runner itself: this module never renders it. */
+  /** The paste-ready message, from the runner itself: this module never renders it.
+   *
+   *  Cached against the artifact's size and mtime. Without that, every `artifact-updated` event
+   *  made every watching tab fetch the package, and every fetch spawned a fresh child process to
+   *  render it - a process-spawning storm proportional to readers times writes. */
   async message(job: PrepromptJob): Promise<string> {
+    const stamp = this.stamp(join(job.runDir, "artifact.md"));
+    const hit = this.packages.get(job.jobId);
+    if (hit !== undefined && hit.stamp === stamp) return hit.text;
+    const text = await this.render(job);
+    this.packages.set(job.jobId, { stamp, text });
+    return text;
+  }
+
+  private stamp(path: string): string {
+    try {
+      const info = statSync(path);
+      return `${info.size}:${info.mtimeMs}`;
+    } catch {
+      return "none";
+    }
+  }
+
+  private async render(job: PrepromptJob): Promise<string> {
     const argv = [...this.options.command, "message", job.slug];
     const child = Bun.spawn(argv, { cwd: this.options.root, stdout: "pipe", stderr: "pipe" });
     const text = await new Response(child.stdout).text();
@@ -242,7 +265,7 @@ export class Preprompt {
             exitCode: entry["exitCode"] ?? null,
             refused,
             output: refused.length > 0 ? "" : String(entry["stdout"] ?? ""),
-            stderr: String(entry["stderr"] ?? "").slice(0, 2000),
+            stderr: String(entry["stderr"] ?? ""),
           },
         });
       }
@@ -282,6 +305,17 @@ export class Preprompt {
   }
 
   /** The child is gone. One last sweep, so the last stage it wrote is not lost to the race. */
+  /** How long a finished job stays in memory with its history. Long enough to reload the page
+   *  and decide; not so long that a day of gathering is still resident at midnight. */
+  private static readonly KEEP_FINISHED_MS = 30 * 60 * 1000;
+
+  private forget(job: PrepromptJob): void {
+    setTimeout(() => {
+      this.jobs.delete(job.jobId);
+      this.packages.delete(job.jobId);
+    }, Preprompt.KEEP_FINISHED_MS).unref?.();
+  }
+
   private async finish(job: PrepromptJob, code: number): Promise<void> {
     if (!this.jobs.has(job.jobId)) return; // killed; its error event is already out
     await this.sweep(job);
@@ -301,6 +335,7 @@ export class Preprompt {
       });
     }
     for (const reader of job.readers) job.readers.delete(reader);
+    this.forget(job);
   }
 
   private async readRun(job: PrepromptJob): Promise<Record<string, unknown> | null> {
