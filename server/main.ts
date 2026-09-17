@@ -1655,12 +1655,15 @@ const server = Bun.serve<SocketData, Routes>({
         if (denied !== null) return denied;
         const sessionId = req.params.id;
         if (!SAFE.test(sessionId)) return json({ error: "bad session id" }, 400);
-        const body = (await req.json()) as { prompt?: unknown; roots?: unknown };
+        const body = (await req.json()) as { prompt?: unknown; roots?: unknown; project?: unknown };
         if (typeof body.prompt !== "string" || body.prompt.trim().length === 0) {
           return json({ error: "prompt required" }, 400);
         }
         const roots = Array.isArray(body.roots) ? body.roots.filter((r): r is string => typeof r === "string") : [];
-        const job = preprompt.start(sessionId, body.prompt, roots);
+        // The session's own transcript, so the gather knows what has already been said and read.
+        const project = typeof body.project === "string" && SAFE.test(body.project) ? body.project : "";
+        const transcript = project === "" ? "" : (sessionTranscriptPath(project, sessionId) ?? "");
+        const job = preprompt.start(sessionId, body.prompt, roots, transcript);
         return json({ jobId: job.jobId, slug: job.slug });
       },
     },

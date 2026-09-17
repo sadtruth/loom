@@ -81,13 +81,18 @@ export class PrepromptPanel {
     private toComposer: (text: string) => void = () => {},
   ) {}
 
-  async gather(sessionId: string, prompt: string, roots: string[] = []): Promise<GatherHandle | null> {
+  async gather(
+    sessionId: string,
+    prompt: string,
+    roots: string[] = [],
+    project = "",
+  ): Promise<GatherHandle | null> {
     const url =
       sessionId === "" ? "/api/preprompt" : `/api/sessions/${encodeURIComponent(sessionId)}/preprompt`;
     const response = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ prompt, roots }),
+      body: JSON.stringify({ prompt, roots, project }),
     });
     if (!response.ok) {
       const said = await response.text().catch(() => "");
@@ -392,21 +397,28 @@ export class PrepromptPanel {
     card.accept.disabled = true;
     const response = await fetch(`/api/preprompt/${handle.jobId}/accept`, { method: "POST" });
     if (response.status === 204) {
-      card.status.textContent = "sent into the session";
-      card.root.classList.add("pp-sent");
+      this.settle(card, handle);
       return;
     }
     if (response.ok) {
       const body = (await response.json()) as { text?: string; why?: string };
       if (typeof body.text === "string") {
         this.toComposer(body.text);
-        card.status.textContent = body.why ?? "in the composer — press send";
-        card.root.classList.add("pp-sent");
+        this.settle(card, handle);
         return;
       }
     }
     card.accept.disabled = false;
     card.status.textContent = `accept failed: ${response.status}`;
+  }
+
+  /** Once it has been accepted, the decision is made: the card folds to one line so the
+   *  conversation continues under it instead of behind it. The evidence is one click away. */
+  /** Accepted means done with. The package is in the session or in the composer; leaving the
+   *  card behind just pushes the conversation around. */
+  private settle(card: Card, handle: GatherHandle): void {
+    card.root.remove();
+    this.cards.delete(handle.jobId);
   }
 
   private async more(handle: GatherHandle, card: Card): Promise<void> {

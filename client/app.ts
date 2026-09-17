@@ -5442,7 +5442,7 @@ function startGather(): void {
   // means the question is about that project, and a whole-vault scan answers a different one.
   const recordRoot = state.activeRecord === null ? null : dirOfRecord(state.activeRecord);
   const roots = recordRoot === null ? [] : [recordRoot];
-  void prepromptPanel.gather(state.sessionId, text, roots);
+  void prepromptPanel.gather(state.sessionId, text, roots, state.projectKey);
 }
 
 ui.composerGather.addEventListener("click", startGather);

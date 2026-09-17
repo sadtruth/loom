@@ -101,6 +101,50 @@ function promptOf(runDir: string): string {
   }
 }
 
+/** What the session already has, compressed to the two things that stop a gather repeating it:
+ *  what was actually said, and which files have already been read. No outputs - a path is enough
+ *  for the model to know it does not need to fetch that file again.
+ */
+export function digestOf(transcriptFile: string, turns = 6, paths = 30): { said: string[]; read: string[] } {
+  let lines: string[] = [];
+  try {
+    lines = readFileSync(transcriptFile, "utf8").split("\n").filter((line) => line.trim().length > 0);
+  } catch {
+    return { said: [], read: [] };
+  }
+  const said: string[] = [];
+  const read: string[] = [];
+  for (const line of lines.slice(-600)) {
+    let entry: Record<string, unknown>;
+    try {
+      entry = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    const message = entry["message"] as { role?: string; content?: unknown } | undefined;
+    if (message === undefined) continue;
+    const content = message.content;
+    if (typeof content === "string") {
+      if (content.trim().length > 0) said.push(`${message.role}: ${content.trim().slice(0, 300)}`);
+      continue;
+    }
+    if (!Array.isArray(content)) continue;
+    for (const part of content as Record<string, unknown>[]) {
+      if (part["type"] === "text" && typeof part["text"] === "string" && part["text"].trim().length > 0) {
+        said.push(`${message.role}: ${String(part["text"]).trim().slice(0, 300)}`);
+      }
+      if (part["type"] === "tool_use") {
+        const input = (part["input"] ?? {}) as Record<string, unknown>;
+        for (const key of ["file_path", "path", "notebook_path"]) {
+          const value = input[key];
+          if (typeof value === "string" && value.length > 0 && !read.includes(value)) read.push(value);
+        }
+      }
+    }
+  }
+  return { said: said.slice(-turns), read: read.slice(-paths) };
+}
+
 export class Preprompt {
   private jobs = new Map<string, PrepromptJob>();
   private packages = new Map<string, { stamp: string; text: string }>();
@@ -173,7 +217,7 @@ export class Preprompt {
     return [...this.jobs.values()].filter((job) => job.sessionId === sessionId);
   }
 
-  start(sessionId: string, prompt: string, roots: string[] = []): PrepromptJob {
+  start(sessionId: string, prompt: string, roots: string[] = [], transcriptFile = ""): PrepromptJob {
     const slug = slugFor(sessionId);
     const job: PrepromptJob = {
       jobId: idFor(slug),
@@ -200,10 +244,21 @@ export class Preprompt {
     const relative = here.startsWith(this.options.root)
       ? here.slice(this.options.root.length).replace(/^\/+/, "")
       : here;
-    const brief =
-      relative === ""
-        ? prompt
-        : `${prompt}\n\n(This is about ${relative} - start there. Everything else under the root is readable too.)`;
+    const where =
+      relative === "" ? "" : `\n\n(This is about ${relative} - start there. Everything else under the root is readable too.)`;
+    // What the session already holds. Without it the second gather in a conversation opens the
+    // same files as the first and spends its steps re-learning what is already in context.
+    const digest = transcriptFile === "" ? { said: [], read: [] } : digestOf(transcriptFile);
+    const earlier = this.forSession(sessionId)
+      .flatMap((job) => this.commandsOf(job))
+      .slice(-40);
+    const parts: string[] = [];
+    if (digest.said.length > 0) parts.push(`What has been said so far:\n${digest.said.join("\n")}`);
+    if (digest.read.length > 0) {
+      parts.push(`Files this session has already read - do not fetch them again unless the question is about a change:\n${digest.read.join("\n")}`);
+    }
+    if (earlier.length > 0) parts.push(`Commands an earlier gather in this session already ran:\n${earlier.join("\n")}`);
+    const brief = `${prompt}${where}${parts.length > 0 ? `\n\n---\n${parts.join("\n\n")}` : ""}`;
     // Context is wherever it is. The runner's own default root is the vault, which left the
     // mirrors, the looms and everything else on this machine invisible. Credential files stay
     // refused by the policy, which is the fence that actually matters.
@@ -294,6 +349,16 @@ export class Preprompt {
     if (job.state !== "running") return () => {};
     job.readers.add(send);
     return () => job.readers.delete(send);
+  }
+
+  /** The commands a finished job ran, read back from its own record. Names only, never output. */
+  private commandsOf(job: PrepromptJob): string[] {
+    try {
+      const run = JSON.parse(readFileSync(join(job.runDir, "run.json"), "utf8")) as Record<string, unknown>;
+      return ((run["evidence"] ?? []) as Record<string, unknown>[]).map((entry) => String(entry["command"] ?? ""));
+    } catch {
+      return [];
+    }
   }
 
   private spawn(argv: string[]): Child {
