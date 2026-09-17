@@ -437,7 +437,10 @@ const PREPROMPT_CMD = process.env["LOOM_PREPROMPT_CMD"]
   ? process.env["LOOM_PREPROMPT_CMD"]!.split(/\s+/)
   : ["bun", join(VAULT_ROOT, "tools", "preprompt", "preprompt.ts")];
 const PREPROMPT_RUNS = process.env["LOOM_PREPROMPT_RUNS"] ?? join(VAULT_ROOT, "tools", "preprompt", "runs");
-const preprompt = new Preprompt({ command: PREPROMPT_CMD, runsDir: PREPROMPT_RUNS, root: VAULT_ROOT });
+// Where a gather may read. The home directory, not the vault: the answer to "what did we decide"
+// often lives in a repo beside it. Credential files are refused by the runner's own policy.
+const PREPROMPT_ROOT = process.env["LOOM_PREPROMPT_ROOT"] ?? homedir();
+const preprompt = new Preprompt({ command: PREPROMPT_CMD, runsDir: PREPROMPT_RUNS, root: PREPROMPT_ROOT });
 
 const runner = new Runner(CLAUDE_BIN, `http://127.0.0.1:${PORT}/api/permit/ask`, PORT, (event: JobEvent) =>
   broadcastToSession(event.sessionId, {
@@ -1609,14 +1612,29 @@ const server = Bun.serve<SocketData, Routes>({
         const denied = requireAuth(req);
         if (denied !== null) return denied;
         const session = new URL(req.url).searchParams.get("session") ?? "";
-        const jobs = (session === "" ? preprompt.all() : preprompt.forSession(session)).map((job) => ({
+        // Live jobs first, then anything on disk the browser might still be holding an id for.
+        const live = session === "" ? preprompt.all() : preprompt.forSession(session);
+        const known = new Set(live.map((job) => job.jobId));
+        const fromDisk = preprompt
+          .restorable()
+          .filter((run) => !known.has(run.jobId))
+          .map((run) => ({
+            jobId: run.jobId,
+            slug: run.slug,
+            prompt: run.prompt,
+            state: "done",
+            sessionId: "",
+            accepted: false,
+          }));
+        const jobs = live.map((job) => ({
           jobId: job.jobId,
           slug: job.slug,
           prompt: job.prompt,
           state: job.state,
           sessionId: job.sessionId,
+          accepted: job.accepted,
         }));
-        return json({ jobs });
+        return json({ jobs: [...jobs, ...fromDisk] });
       },
       POST: async (req) => {
         const denied = requireAuth(req);
@@ -1755,7 +1773,13 @@ const server = Bun.serve<SocketData, Routes>({
           headers: { "content-type": "application/json", cookie: req.headers.get("cookie") ?? "" },
           body: JSON.stringify({ session: job.sessionId, text }),
         });
-        if (!sent.ok) return json({ error: "the session refused the message" }, 502);
+        if (!sent.ok) {
+          // The session id can be a draft the server has never started - gathering before the
+          // first message is the normal case - and /api/input refuses that. Handing the package
+          // back beats a 502: you press send, and the session starts with the context already in.
+          job.accepted = true;
+          return json({ text, why: `the session would not take it (${sent.status}); it is in the composer instead` });
+        }
         job.accepted = true;
         return new Response(null, { status: 204 });
       },

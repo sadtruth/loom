@@ -24,7 +24,6 @@ interface Card {
   head: HTMLElement;
   band: HTMLElement;
   commands: HTMLElement;
-  notes: HTMLElement;
   packageBox: HTMLDetailsElement;
   packageText: HTMLElement;
   ask: HTMLTextAreaElement;
@@ -68,8 +67,16 @@ function hhmmss(iso: string): string {
 export class PrepromptPanel {
   private cards = new Map<string, Card>();
 
+  /** Loom owns the transcript body and rebuilds it whenever the session redraws, which takes any
+   *  node we put there with it - the card would appear, run, and vanish mid-gather. Rather than
+   *  fight it for ownership, the cards watch for their own removal and put themselves back. */
+  private watcher: MutationObserver | null = null;
+
   constructor(
-    private transcript: HTMLElement,
+    /** The composer. The card is inserted directly before it, so it lands under the last
+     *  message and above the input - loom moves the composer into the transcript body, so a
+     *  fixed container in the markup ends up somewhere else entirely. */
+    private composer: HTMLElement,
     /** Where an accepted package goes when there is no session to send it to. */
     private toComposer: (text: string) => void = () => {},
   ) {}
@@ -92,6 +99,7 @@ export class PrepromptPanel {
       return null;
     }
     const handle = (await response.json()) as GatherHandle;
+    remember(handle.jobId);
     this.listen(handle, this.draw(handle, prompt));
     return handle;
   }
@@ -115,6 +123,13 @@ export class PrepromptPanel {
     };
     for (const job of body.jobs ?? []) {
       if (this.cards.has(job.jobId)) continue;
+      // Only the gathers this browser started. The server remembers every job it is running,
+      // including other people's and other tabs', and drawing those puts someone else's
+      // questions in your conversation.
+      if (!mine().includes(job.jobId)) continue;
+      // Only a gather that is still running comes back by itself. A finished one has had its
+      // answer; redrawing it on every load fills the page with packages you already dealt with.
+      if (job.state !== "running") continue;
       // No session filter. At page load the session id is not resolved yet, so filtering by it
       // dropped every job that HAS one - which is most of them - and the reload redrew nothing.
       // Few jobs are ever open at once, and each card names the question it came from.
@@ -129,7 +144,7 @@ export class PrepromptPanel {
 
   private complain(text: string): void {
     const line = node("div", "pp-complaint", text);
-    this.transcript.append(line);
+    this.composer.parentElement?.insertBefore(line, this.composer);
     line.scrollIntoView({ block: "nearest" });
     setTimeout(() => line.remove(), 12000);
   }
@@ -145,8 +160,16 @@ export class PrepromptPanel {
 
     const task = node("blockquote", "pp-task", prompt);
     const band = node("p", "pp-band", "a cheap model is reading the tree for this question");
+    // The log is a fold of its own with a scroll inside it: fourteen commands with their output
+    // is four thousand pixels, and a card that tall pushes the composer and the three buttons off
+    // the screen - the parts you actually decide with.
+    const logBox = document.createElement("details");
+    logBox.className = "pp-log-box";
+    logBox.open = true;
+    const logSummary = document.createElement("summary");
+    logSummary.textContent = "commands";
     const commands = node("div", "pp-cmds");
-    const notes = node("div", "pp-notes");
+    logBox.append(logSummary, commands);
 
     const packageBox = document.createElement("details");
     packageBox.className = "pp-package";
@@ -170,8 +193,9 @@ export class PrepromptPanel {
     more.disabled = true;
     buttons.append(accept, more, discard);
 
-    root.append(head, task, band, commands, notes, packageBox, ask, buttons);
-    this.transcript.append(root);
+    root.append(head, task, band, logBox, packageBox, ask, buttons);
+    this.place(root);
+    this.keepPlaced();
     root.scrollIntoView({ block: "end", behavior: "smooth" });
 
     const card: Card = {
@@ -180,7 +204,6 @@ export class PrepromptPanel {
       head,
       band,
       commands,
-      notes,
       packageBox,
       packageText,
       ask,
@@ -203,6 +226,24 @@ export class PrepromptPanel {
     more.addEventListener("click", () => void this.more(handle, card));
     discard.addEventListener("click", () => void this.discard(handle, card));
     return card;
+  }
+
+  private place(root: HTMLElement): void {
+    const parent = this.composer.parentElement;
+    if (parent === null) return;
+    parent.insertBefore(root, this.composer);
+  }
+
+  /** One observer for all cards: when a redraw drops one out of the document, put it back where
+   *  it belongs. Cheap - it only looks when the document actually changed. */
+  private keepPlaced(): void {
+    if (this.watcher !== null) return;
+    this.watcher = new MutationObserver(() => {
+      for (const card of this.cards.values()) {
+        if (!card.root.isConnected) this.place(card.root);
+      }
+    });
+    this.watcher.observe(document.body, { childList: true, subtree: true });
   }
 
   /** One line of plain facts, each labelled: an unlabelled number is a number nobody can use. */
@@ -250,9 +291,26 @@ export class PrepromptPanel {
               ? "(no output)"
               : data.stderr
             : data.output;
-        block.append(node("pre", "pp-cmd-out", body));
+        // Complete, but not shouting: a 200-row listing at the top of the card buries everything
+        // under it. The first lines are shown and the rest is one click away, never dropped.
+        const lines = body.split("\n");
+        if (lines.length <= 14) {
+          block.append(node("pre", "pp-cmd-out", body));
+        } else {
+          const stub = node("pre", "pp-cmd-out", lines.slice(0, 10).join("\n"));
+          const rest = document.createElement("details");
+          rest.className = "pp-rest";
+          const summary = document.createElement("summary");
+          summary.textContent = `${lines.length - 10} more lines`;
+          rest.append(summary, node("pre", "pp-cmd-out", lines.slice(10).join("\n")));
+          block.append(stub, rest);
+        }
       }
       card.commands.append(block);
+      const fold = card.commands.parentElement?.querySelector("summary");
+      if (fold !== null && fold !== undefined) {
+        fold.textContent = `${card.commands.childElementCount} commands, with what each printed`;
+      }
       card.band.textContent = `${card.model === "" ? "a cheap model" : card.model} ran these commands to gather context:`;
     });
 
@@ -270,15 +328,8 @@ export class PrepromptPanel {
       this.head(card);
     });
 
-    source.addEventListener("note", (event) => {
-      const data = JSON.parse((event as MessageEvent).data) as { text: string };
-      if (card.notes.childElementCount === 0) {
-        card.notes.append(
-          node("b", "pp-notes-head", `${card.model === "" ? "the model" : card.model} says:`),
-        );
-      }
-      card.notes.append(node("p", "pp-note", data.text));
-    });
+    // Notes are not part of the package any more - every one written in testing was invented -
+    // and old runs on disk still carry them, so the panel ignores them entirely.
 
     source.addEventListener("artifact-updated", () => void this.refreshPackage(handle, card));
 
@@ -378,7 +429,6 @@ export class PrepromptPanel {
     // The stream replays the job's whole history to every new reader, so the commands already on
     // screen would be appended a second time. Clear, and let the replay redraw them once.
     card.commands.replaceChildren();
-    card.notes.replaceChildren();
     card.more.disabled = true;
     card.status.textContent = "gathering";
     card.root.classList.remove("pp-ready");
@@ -395,9 +445,27 @@ export class PrepromptPanel {
   }
 }
 
+const MINE = "preprompt-jobs";
+
+function mine(): string[] {
+  try {
+    return JSON.parse(sessionStorage.getItem(MINE) ?? "[]") as string[];
+  } catch {
+    return [];
+  }
+}
+
+function remember(jobId: string): void {
+  try {
+    sessionStorage.setItem(MINE, JSON.stringify([...mine(), jobId].slice(-20)));
+  } catch {
+    // a browser with no session storage still gets the live panel, just not the reload
+  }
+}
+
 export function mountPreprompt(
-  transcript: HTMLElement,
+  composer: HTMLElement,
   toComposer: (text: string) => void = () => {},
 ): PrepromptPanel {
-  return new PrepromptPanel(transcript, toComposer);
+  return new PrepromptPanel(composer, toComposer);
 }

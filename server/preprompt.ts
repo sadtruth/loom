@@ -14,8 +14,8 @@
  * the runner writes every 5-30 seconds, so 400ms of latency is invisible and costs one stat.
  */
 
-import { randomBytes } from "node:crypto";
-import { statSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -67,13 +67,14 @@ interface Child {
   stderr?: () => string;
 }
 
-const HEX = "0123456789abcdef";
-
-function jobId(): string {
-  const bytes = randomBytes(6);
-  let out = "";
-  for (const byte of bytes) out += HEX[byte >> 4]! + HEX[byte & 15]!;
-  return out; // 12 hex characters, per the contract the client pattern-matches on
+/** The id is derived from the slug, not drawn at random.
+ *
+ * A random id dies with the process, and the browser that remembered it is left pointing at
+ * nothing after a restart - which is exactly what a user sees as "my gather disappeared". The
+ * run directory on disk is the durable half, so the id that names it must be derivable from it.
+ */
+function idFor(slug: string): string {
+  return createHash("sha256").update(slug).digest("hex").slice(0, 12);
 }
 
 /** `pp-<first 8 of the session id>-<YYYYMMDD-HHMMSS>`: sortable, and it names its session.
@@ -87,6 +88,19 @@ export function slugFor(sessionId: string, now = new Date()): string {
   return `pp-${sessionId === "" ? "new" : sessionId.slice(0, 8)}-${stamp}`;
 }
 
+/** The question a run was started with, read back out of its own record. A restored card with
+ *  no question on it is a card you cannot judge. */
+function promptOf(runDir: string): string {
+  try {
+    const run = JSON.parse(readFileSync(join(runDir, "run.json"), "utf8")) as Record<string, unknown>;
+    const header = (run["header"] ?? {}) as Record<string, unknown>;
+    const rounds = (header["rounds"] ?? []) as Record<string, unknown>[];
+    return String(rounds[0]?.["prompt"] ?? header["prompt"] ?? "");
+  } catch {
+    return "";
+  }
+}
+
 export class Preprompt {
   private jobs = new Map<string, PrepromptJob>();
   private packages = new Map<string, { stamp: string; text: string }>();
@@ -97,7 +111,56 @@ export class Preprompt {
   }
 
   get(jobId: string): PrepromptJob | undefined {
-    return this.jobs.get(jobId);
+    return this.jobs.get(jobId) ?? this.restore(jobId);
+  }
+
+  /** A job the process no longer holds, rebuilt from the run it left on disk.
+   *
+   * Nothing is re-run: the commands, their output and the notes are read back out of run.json,
+   * so a finished gather survives a server restart, an eviction, and a browser reload. A restored
+   * job is finished by definition - the child it belonged to is gone. */
+  private restore(jobId: string): PrepromptJob | undefined {
+    let slugs: string[] = [];
+    try {
+      slugs = readdirSync(this.options.runsDir);
+    } catch {
+      return undefined;
+    }
+    const slug = slugs.find((name) => idFor(name) === jobId);
+    if (slug === undefined) return undefined;
+    const runDir = join(this.options.runsDir, slug);
+    if (!existsSync(join(runDir, "run.json"))) return undefined;
+    const job: PrepromptJob = {
+      jobId,
+      slug,
+      prompt: promptOf(runDir),
+      sessionId: "",
+      runDir,
+      state: "done",
+      history: [],
+      readers: new Set(),
+      accepted: false,
+      child: null,
+      stderr: () => "",
+      poll: null,
+      seen: { commands: 0, notes: 0, step: 0, artifactBytes: 0 },
+    };
+    this.jobs.set(jobId, job);
+    void this.sweep(job).then(() => {
+      this.emit(job, { event: "done", data: { stopReason: "restored from disk" } });
+    });
+    return job;
+  }
+
+  /** Recent runs on disk, whether or not this process ran them. */
+  restorable(): { jobId: string; slug: string; prompt: string }[] {
+    try {
+      return readdirSync(this.options.runsDir)
+        .filter((slug) => existsSync(join(this.options.runsDir, slug, "run.json")))
+        .map((slug) => ({ jobId: idFor(slug), slug, prompt: promptOf(join(this.options.runsDir, slug)) }));
+    } catch {
+      return [];
+    }
   }
 
   /** Every job this server knows about, including the ones that belong to no session yet. */
@@ -113,7 +176,7 @@ export class Preprompt {
   start(sessionId: string, prompt: string, roots: string[] = []): PrepromptJob {
     const slug = slugFor(sessionId);
     const job: PrepromptJob = {
-      jobId: jobId(),
+      jobId: idFor(slug),
       slug,
       prompt,
       sessionId,
@@ -127,8 +190,26 @@ export class Preprompt {
       poll: null,
       seen: { commands: 0, notes: 0, step: 0, artifactBytes: 0 },
     };
-    const argv = [...this.options.command, "new", prompt, "--slug", slug];
-    for (const root of roots) argv.push("--root", root);
+    // The record's directory is where the question came from, not the edge of what may be read.
+    // Fencing the gather into it meant `ls ..` was refused and a project's own parent, the other
+    // projects and `context/` were invisible - context lives across the vault, so the runner's
+    // own root stands and the directory becomes a starting point in the brief.
+    // Relative to the root the runner reads, because that is the only form its commands take.
+    // Handed an absolute path, the model spent four commands hunting for the directory.
+    const here = roots[0] ?? "";
+    const relative = here.startsWith(this.options.root)
+      ? here.slice(this.options.root.length).replace(/^\/+/, "")
+      : here;
+    const brief =
+      relative === ""
+        ? prompt
+        : `${prompt}\n\n(This is about ${relative} - start there. Everything else under the root is readable too.)`;
+    // Context is wherever it is. The runner's own default root is the vault, which left the
+    // mirrors, the looms and everything else on this machine invisible. Credential files stay
+    // refused by the policy, which is the fence that actually matters.
+    const argv = [...this.options.command, "new", brief, "--slug", slug, "--root", this.options.root];
+    // Read anywhere under the root, but look here first.
+    if (relative !== "") argv.push("--start", relative);
     job.child = this.spawn(argv);
     job.stderr = job.child.stderr ?? (() => "");
     this.jobs.set(job.jobId, job);

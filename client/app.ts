@@ -5427,7 +5427,7 @@ void boot().catch((error: unknown) => {
 // Its own strip between the transcript and the composer. The transcript belongs to loom and is
 // rebuilt when the session redraws, which silently removed the package that had been appended to
 // it - including after a reload, which is exactly when you most want it back.
-const prepromptPanel = mountPreprompt(ui.prepromptFlow, (text) => {
+const prepromptPanel = mountPreprompt(ui.composer, (text) => {
   ui.composerText.value = text;
   ui.composerText.focus();
 });
