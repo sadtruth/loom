@@ -259,12 +259,16 @@ export class Preprompt {
     }
     if (earlier.length > 0) parts.push(`Commands an earlier gather in this session already ran:\n${earlier.join("\n")}`);
     const brief = `${prompt}${where}${parts.length > 0 ? `\n\n---\n${parts.join("\n\n")}` : ""}`;
-    // Context is wherever it is. The runner's own default root is the vault, which left the
-    // mirrors, the looms and everything else on this machine invisible. Credential files stay
-    // refused by the policy, which is the fence that actually matters.
-    const argv = [...this.options.command, "new", brief, "--slug", slug, "--root", this.options.root];
+    // Context is wherever it is — but reach costs time. Credential files stay refused by the
+    // policy, which is the fence that actually matters; the root below only decides where the
+    // gather starts looking, and a session with no record still gets the whole home.
+    // Root the run where the question came from. The home directory was the root until the file
+    // census behind `q` turned out to stop at its first 20000 files: the vault fell outside them,
+    // so a gather mapped telegram exports for minutes and never saw the project (2026-09-18).
+    const root = here === "" ? this.options.root : here;
+    const argv = [...this.options.command, "new", brief, "--slug", slug, "--root", root];
     // Read anywhere under the root, but look here first.
-    if (relative !== "") argv.push("--start", relative);
+    if (root === this.options.root && relative !== "") argv.push("--start", relative);
     job.child = this.spawn(argv);
     job.stderr = job.child.stderr ?? (() => "");
     this.jobs.set(job.jobId, job);
