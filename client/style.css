@@ -3024,3 +3024,60 @@ button.seam-open:hover { background: var(--bg-sunken); color: var(--ink); }
    layout from typing (item 51) — the JS fallback in `fitComposer` still clamps at the same 40% of
    the window for anything that does not support it. */
 #composer-text { field-sizing: content; max-height: 40vh; }
+
+/* ── the gathered package, under the conversation ───────────────────────────── */
+/* Loom's own colours: this block is a turn in the conversation, not a console. */
+.pp-pkg {
+  border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: var(--radius);
+  background: var(--bg-raised); margin: 14px 0; padding: 12px 14px; font-family: var(--sans);
+}
+.pp-pkg.pp-ready { border-left-color: var(--user); }
+.pp-pkg.pp-failed { border-left-color: var(--error); }
+.pp-pkg.pp-sent { opacity: 0.75; }
+.pp-pkg-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.pp-badge {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--accent);
+  font-weight: 600;
+}
+.pp-status { font-size: 13px; color: var(--ink); }
+.pp-meta { margin-left: auto; font-size: 12px; color: var(--ink-dim); font-family: var(--mono); }
+.pp-task {
+  margin: 8px 0; padding-left: 10px; border-left: 2px solid var(--line-soft);
+  color: var(--ink); font-size: 14px;
+}
+.pp-band { margin: 10px 0 6px; font-size: 13px; color: var(--ink-dim); }
+.pp-cmd { margin: 0 0 10px; }
+.pp-cmd-line { display: flex; gap: 10px; align-items: baseline; }
+.pp-cmd-text { font-family: var(--mono); font-size: 12.5px; color: var(--ink); word-break: break-all; }
+.pp-cmd-at { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); margin-left: auto; }
+.pp-cmd-out {
+  margin: 4px 0 0; padding: 8px 10px; background: var(--bg); border: 1px solid var(--line-soft);
+  border-radius: 5px; font-family: var(--mono); font-size: 12px; color: var(--ink-dim);
+  white-space: pre-wrap; word-break: break-word; max-height: 320px; overflow: auto;
+}
+.pp-cmd-refused .pp-cmd-text { color: var(--warn); }
+.pp-refused-out { color: var(--warn); }
+.pp-notes { margin: 10px 0; }
+.pp-notes-head { font-size: 13px; color: var(--ink); }
+.pp-note { margin: 4px 0; font-size: 14px; color: var(--ink); }
+.pp-package { margin: 10px 0; }
+.pp-package summary { cursor: pointer; font-size: 13px; color: var(--accent); }
+.pp-package-text {
+  margin: 8px 0 0; padding: 10px; background: var(--bg); border: 1px solid var(--line-soft);
+  border-radius: 5px; font-family: var(--mono); font-size: 12px; color: var(--ink);
+  white-space: pre-wrap; max-height: 420px; overflow: auto;
+}
+.pp-ask {
+  width: 100%; box-sizing: border-box; margin: 6px 0; padding: 6px 8px; font-family: var(--sans);
+  font-size: 13px; border: 1px solid var(--line); border-radius: 5px; background: var(--bg);
+  color: var(--ink);
+}
+.pp-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+.pp-complaint {
+  margin: 10px 0; padding: 8px 10px; border: 1px solid var(--warn); border-radius: var(--radius);
+  color: var(--warn); font-size: 13px; background: var(--bg-raised);
+}
+.pp-rest summary { cursor: pointer; font-size: 12px; color: var(--accent); margin-top: 4px; }
+.pp-log-box { margin: 6px 0 10px; }
+.pp-log-box > summary { cursor: pointer; font-size: 13px; color: var(--ink-dim); }
+.pp-cmds { max-height: 44vh; overflow-y: auto; margin-top: 8px; padding-right: 6px; }

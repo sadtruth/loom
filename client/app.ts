@@ -117,6 +117,7 @@ import {
   syncDock,
   undrawnEchoes,
 } from "./composer.ts";
+import { mountPreprompt } from "./preprompt.ts";
 import { sameBundle, styleHashOf } from "./bundle.ts";
 import { isPoint, pointClass, pointLabel, type TurnFacts } from "./gutter.ts";
 import {
@@ -5419,3 +5420,38 @@ void boot().catch((error: unknown) => {
   }
   setStatus(String(error), "error");
 });
+
+// ── preprompt: gather first, send second ──────────────────────────────────────
+// The button sits beside Send and takes the same text: what you were about to ask is exactly
+// the brief a gatherer needs. Nothing is sent to the session until you press Accept on the card.
+// Its own strip between the transcript and the composer. The transcript belongs to loom and is
+// rebuilt when the session redraws, which silently removed the package that had been appended to
+// it - including after a reload, which is exactly when you most want it back.
+const prepromptPanel = mountPreprompt(ui.composer, (text) => {
+  ui.composerText.value = text;
+  ui.composerText.focus();
+});
+function startGather(): void {
+  const text = ui.composerText.value.trim();
+  // Both of these used to return silently, which is indistinguishable from a dead button.
+  if (text === "") {
+    toast("gather: write the question in the composer first");
+    return;
+  }
+  // Gather where the session would run, not at the top of the vault: a record open in the UI
+  // means the question is about that project, and a whole-vault scan answers a different one.
+  const recordRoot = state.activeRecord === null ? null : dirOfRecord(state.activeRecord);
+  const roots = recordRoot === null ? [] : [recordRoot];
+  void prepromptPanel.gather(state.sessionId, text, roots, state.projectKey);
+}
+
+ui.composerGather.addEventListener("click", startGather);
+// The composer's own shortcut, as designed: Enter sends, Ctrl+Shift+Enter gathers.
+ui.composerText.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && event.shiftKey && (event.ctrlKey || event.metaKey)) {
+    event.preventDefault();
+    startGather();
+  }
+});
+// A reload loses the page's memory of running gathers, not the gathers themselves.
+void prepromptPanel.reattach();

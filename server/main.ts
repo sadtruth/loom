@@ -27,6 +27,7 @@ import { PermitBroker, type Permit, type Verdict } from "./permits.ts";
 import { MODEL_SPECS, asModelId } from "./models.ts";
 import { writePick, readAllPicks } from "./picks.ts";
 import { asEffort, asModel, Runner, type JobEvent, type JobState, type QueuedMessage } from "./input.ts";
+import { Preprompt } from "./preprompt.ts";
 import { authed, loadToken, loginResponse } from "./auth.ts";
 import { frameOf, scanRecords, scanRecordsUncached, recordsWithStaleness, type RecordInfo } from "./records.ts";
 import { CORES, VAULT, cwdFor, homeFor, usableCores } from "./cores.ts";
@@ -429,6 +430,18 @@ const broker = new PermitBroker(
   PERMIT_TIMEOUT_MS,
 );
 
+// The gatherer runs in the vault, not in this repository: the command is configurable so the
+// tests can point it at a fake, and the default is built by joining rather than by splitting a
+// string, because the vault path contains a space and splitting it produces a broken argv.
+const PREPROMPT_CMD = process.env["LOOM_PREPROMPT_CMD"]
+  ? process.env["LOOM_PREPROMPT_CMD"]!.split(/\s+/)
+  : ["bun", join(VAULT_ROOT, "tools", "preprompt", "preprompt.ts")];
+const PREPROMPT_RUNS = process.env["LOOM_PREPROMPT_RUNS"] ?? join(VAULT_ROOT, "tools", "preprompt", "runs");
+// Where a gather may read. The home directory, not the vault: the answer to "what did we decide"
+// often lives in a repo beside it. Credential files are refused by the runner's own policy.
+const PREPROMPT_ROOT = process.env["LOOM_PREPROMPT_ROOT"] ?? homedir();
+const preprompt = new Preprompt({ command: PREPROMPT_CMD, runsDir: PREPROMPT_RUNS, root: PREPROMPT_ROOT });
+
 const runner = new Runner(CLAUDE_BIN, `http://127.0.0.1:${PORT}/api/permit/ask`, PORT, (event: JobEvent) =>
   broadcastToSession(event.sessionId, {
     type: "job",
@@ -503,6 +516,13 @@ async function carsFor(recordPath: string): Promise<TrainCar[]> {
 // Both generics must be explicit: Bun.serve<WebSocketData, RoutePaths>. Fixing the first without the
 // second collapses RoutePaths to `never` and every req.params access loses its type.
 type Routes =
+  | "/api/sessions/:id/preprompt"
+  | "/api/preprompt"
+  | "/api/preprompt/:jobId/package"
+  | "/api/preprompt/:jobId/events"
+  | "/api/preprompt/:jobId/gap"
+  | "/api/preprompt/:jobId/accept"
+  | "/api/preprompt/:jobId"
   | "/api/draft"
   | "/api/recap"
   | "/api/recap/dismiss"
@@ -1582,6 +1602,203 @@ const server = Bun.serve<SocketData, Routes>({
       },
     },
 
+    // ── preprompt: a cheap model gathers context while this session keeps running ──
+
+    // Gathering before the session exists is the point of the feature, so this route takes no
+    // session id. Accepting such a job hands the text back instead of sending it: the session it
+    // belongs to is the one you start by pressing send on it.
+    "/api/preprompt": {
+      GET: (req) => {
+        const denied = requireAuth(req);
+        if (denied !== null) return denied;
+        const session = new URL(req.url).searchParams.get("session") ?? "";
+        // Live jobs first, then anything on disk the browser might still be holding an id for.
+        const live = session === "" ? preprompt.all() : preprompt.forSession(session);
+        const known = new Set(live.map((job) => job.jobId));
+        const fromDisk = preprompt
+          .restorable()
+          .filter((run) => !known.has(run.jobId))
+          .map((run) => ({
+            jobId: run.jobId,
+            slug: run.slug,
+            prompt: run.prompt,
+            state: "done",
+            sessionId: "",
+            accepted: false,
+          }));
+        const jobs = live.map((job) => ({
+          jobId: job.jobId,
+          slug: job.slug,
+          prompt: job.prompt,
+          state: job.state,
+          sessionId: job.sessionId,
+          accepted: job.accepted,
+        }));
+        return json({ jobs: [...jobs, ...fromDisk] });
+      },
+      POST: async (req) => {
+        const denied = requireAuth(req);
+        if (denied !== null) return denied;
+        const body = (await req.json()) as { prompt?: unknown; roots?: unknown };
+        if (typeof body.prompt !== "string" || body.prompt.trim().length === 0) {
+          return json({ error: "prompt required" }, 400);
+        }
+        const roots = Array.isArray(body.roots) ? body.roots.filter((r): r is string => typeof r === "string") : [];
+        const job = preprompt.start("", body.prompt, roots);
+        return json({ jobId: job.jobId, slug: job.slug });
+      },
+    },
+
+    "/api/sessions/:id/preprompt": {
+      POST: async (req) => {
+        const denied = requireAuth(req);
+        if (denied !== null) return denied;
+        const sessionId = req.params.id;
+        if (!SAFE.test(sessionId)) return json({ error: "bad session id" }, 400);
+        const body = (await req.json()) as { prompt?: unknown; roots?: unknown; project?: unknown };
+        if (typeof body.prompt !== "string" || body.prompt.trim().length === 0) {
+          return json({ error: "prompt required" }, 400);
+        }
+        const roots = Array.isArray(body.roots) ? body.roots.filter((r): r is string => typeof r === "string") : [];
+        // The session's own transcript, so the gather knows what has already been said and read.
+        const project = typeof body.project === "string" && SAFE.test(body.project) ? body.project : "";
+        const transcript = project === "" ? "" : (sessionTranscriptPath(project, sessionId) ?? "");
+        const job = preprompt.start(sessionId, body.prompt, roots, transcript);
+        return json({ jobId: job.jobId, slug: job.slug });
+      },
+    },
+
+    "/api/preprompt/:jobId/events": {
+      GET: (req) => {
+        const denied = requireAuth(req);
+        if (denied !== null) return denied;
+        const job = preprompt.get(req.params.jobId);
+        if (job === undefined) return json({ error: "no such job" }, 404);
+        // A reader that attaches late is handed the history first, so the panel that opens after
+        // ten commands shows ten commands rather than starting from wherever the run happens to be.
+        let drop = () => {};
+        const stream = new ReadableStream({
+          start(controller) {
+            const encoder = new TextEncoder();
+            const write = (event: { event: string; data: Record<string, unknown> }) => {
+              try {
+                controller.enqueue(encoder.encode(`event: ${event.event}\ndata: ${JSON.stringify(event.data)}\n\n`));
+              } catch {
+                drop();
+              }
+              if (event.event === "done" || event.event === "error") {
+                drop();
+                try {
+                  controller.close();
+                } catch {
+                  // the reader is already gone
+                }
+              }
+            };
+            // Bun closes an idle request after 10 seconds, and a gather is quiet for far longer
+            // than that between commands. A comment line every 5 seconds keeps the socket alive
+            // and costs nothing: EventSource ignores lines that start with a colon.
+            const beat = setInterval(() => {
+              try {
+                controller.enqueue(new TextEncoder().encode(": keep-alive\n\n"));
+              } catch {
+                clearInterval(beat);
+              }
+            }, 5000);
+            const stop = preprompt.subscribe(job, write);
+            drop = () => {
+              clearInterval(beat);
+              stop();
+            };
+          },
+          cancel() {
+            drop();
+          },
+        });
+        return new Response(stream, {
+          headers: {
+            "content-type": "text/event-stream",
+            "cache-control": "no-cache",
+            connection: "keep-alive",
+          },
+        });
+      },
+    },
+
+    // What Accept would send, and what has been gathered so far. Both exist so the panel can
+    // show the package BEFORE it is accepted: a button that sends something you cannot read is
+    // not a decision, it is a dice roll.
+    "/api/preprompt/:jobId/package": {
+      GET: async (req) => {
+        const denied = requireAuth(req);
+        if (denied !== null) return denied;
+        const job = preprompt.get(req.params.jobId);
+        if (job === undefined) return json({ error: "no such job" }, 404);
+        return json({ text: await preprompt.message(job), artifact: await preprompt.artifact(job) });
+      },
+    },
+
+    "/api/preprompt/:jobId/gap": {
+      POST: async (req) => {
+        const denied = requireAuth(req);
+        if (denied !== null) return denied;
+        const job = preprompt.get(req.params.jobId);
+        if (job === undefined) return json({ error: "no such job" }, 404);
+        const body = (await req.json()) as { text?: unknown };
+        if (typeof body.text !== "string" || body.text.trim().length === 0) {
+          return json({ error: "text required" }, 400);
+        }
+        const started = preprompt.gap(job, body.text);
+        if (!started.ok) return json({ error: "a round is already running" }, 409);
+        return json({ ok: true });
+      },
+    },
+
+    "/api/preprompt/:jobId/accept": {
+      POST: async (req) => {
+        const denied = requireAuth(req);
+        if (denied !== null) return denied;
+        const job = preprompt.get(req.params.jobId);
+        if (job === undefined) return json({ error: "no such job" }, 404);
+        if (job.accepted) return json({ error: "already accepted" }, 409);
+        const text = await preprompt.message(job);
+        if (text.trim().length === 0) return json({ error: "nothing gathered yet" }, 409);
+        if (job.sessionId === "") {
+          // No session to send into. The client puts this in the composer and the user sends it,
+          // which is what starts the session - gathered context as the first thing it ever sees.
+          job.accepted = true;
+          return json({ text });
+        }
+        // Through the ordinary write path, so the message lands in the transcript exactly as a
+        // typed one does. This route must not learn how to start children of its own.
+        const sent = await fetch(`http://127.0.0.1:${PORT}/api/input`, {
+          method: "POST",
+          headers: { "content-type": "application/json", cookie: req.headers.get("cookie") ?? "" },
+          body: JSON.stringify({ session: job.sessionId, text }),
+        });
+        if (!sent.ok) {
+          // The session id can be a draft the server has never started - gathering before the
+          // first message is the normal case - and /api/input refuses that. Handing the package
+          // back beats a 502: you press send, and the session starts with the context already in.
+          job.accepted = true;
+          return json({ text, why: `the session would not take it (${sent.status}); it is in the composer instead` });
+        }
+        job.accepted = true;
+        return new Response(null, { status: 204 });
+      },
+    },
+
+    "/api/preprompt/:jobId": {
+      DELETE: (req) => {
+        const denied = requireAuth(req);
+        if (denied !== null) return denied;
+        const job = preprompt.get(req.params.jobId);
+        if (job === undefined) return json({ error: "no such job" }, 404);
+        preprompt.kill(job);
+        return new Response(null, { status: 204 });
+      },
+    },
+
     "/api/models": {
       GET: (req) => {
         const denied = requireAuth(req);
@@ -2280,6 +2497,7 @@ console.log(`  onboard a device: http://<this-host>:${PORT}/login?token=${TOKEN}
  * — and gets out of the way. Driven evidence, real binary, in `spool.ts` and record item 6.
  */
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
+  process.on(signal, () => preprompt.shutdown());
   process.on(signal, () => {
     runner.detach();
     server.stop();
