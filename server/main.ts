@@ -433,10 +433,15 @@ const broker = new PermitBroker(
 // The gatherer runs in the vault, not in this repository: the command is configurable so the
 // tests can point it at a fake, and the default is built by joining rather than by splitting a
 // string, because the vault path contains a space and splitting it produces a broken argv.
+// Both defaults are relative to loom's own directory, not to VAULT_ROOT: production serves from
+// the worktree at ~/wt/loom-prod, where climbing five levels out of server/ lands on the home
+// directory and the gatherer is not there. loom sits at <repo>/tools/loom, so its sibling is the
+// gatherer (2026-09-18: prod failed every gather with "Module not found /home/barin/tools/...").
+const TOOLS_DIR = join(import.meta.dir, "..", "..");
 const PREPROMPT_CMD = process.env["LOOM_PREPROMPT_CMD"]
   ? process.env["LOOM_PREPROMPT_CMD"]!.split(/\s+/)
-  : ["bun", join(VAULT_ROOT, "tools", "preprompt", "preprompt.ts")];
-const PREPROMPT_RUNS = process.env["LOOM_PREPROMPT_RUNS"] ?? join(VAULT_ROOT, "tools", "preprompt", "runs");
+  : ["bun", join(TOOLS_DIR, "preprompt", "preprompt.ts")];
+const PREPROMPT_RUNS = process.env["LOOM_PREPROMPT_RUNS"] ?? join(TOOLS_DIR, "preprompt", "runs");
 // Where a gather may read. The home directory, not the vault: the answer to "what did we decide"
 // often lives in a repo beside it. Credential files are refused by the runner's own policy.
 const PREPROMPT_ROOT = process.env["LOOM_PREPROMPT_ROOT"] ?? homedir();
