@@ -66,6 +66,10 @@ function hhmmss(iso: string): string {
 
 export class PrepromptPanel {
   private cards = new Map<string, Card>();
+  /** Which session each card was gathered for, and which session the composer is showing. A card
+   * drawn in one chat used to stay on the screen in every other chat (2026-09-18). */
+  private owner = new Map<string, string>();
+  private showing = "";
 
   /** Loom owns the transcript body and rebuilds it whenever the session redraws, which takes any
    *  node we put there with it - the card would appear, run, and vanish mid-gather. Rather than
@@ -105,6 +109,8 @@ export class PrepromptPanel {
     }
     const handle = (await response.json()) as GatherHandle;
     remember(handle.jobId);
+    this.owner.set(handle.jobId, sessionId);
+    this.showing = sessionId;
     this.listen(handle, this.draw(handle, prompt));
     return handle;
   }
@@ -142,9 +148,23 @@ export class PrepromptPanel {
       // thrown away. Redrawing every job the server remembers turns a reload into a pile of old
       // packages you already dealt with.
       if (job.accepted) continue;
+      this.owner.set(job.jobId, job.sessionId);
       const handle = { jobId: job.jobId, slug: job.slug };
       this.listen(handle, this.draw(handle, job.prompt));
     }
+  }
+
+  /** Show only what was gathered for this session. A gather that started before the session had
+   * an id belongs to whatever the composer opens next, so it stays visible. */
+  showSession(sessionId: string): void {
+    this.showing = sessionId;
+    for (const [jobId, card] of this.cards) card.root.hidden = this.hiddenFor(jobId);
+  }
+
+  private hiddenFor(jobId: string): boolean {
+    const mine = this.owner.get(jobId) ?? "";
+    if (mine === "" || this.showing === "") return false;
+    return mine !== this.showing;
   }
 
   private complain(text: string): void {
@@ -223,6 +243,7 @@ export class PrepromptPanel {
       timer: null,
     };
     this.cards.set(handle.jobId, card);
+    card.root.hidden = this.hiddenFor(handle.jobId);
 
     card.timer = setInterval(() => this.head(card), 1000);
     this.head(card);

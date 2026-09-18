@@ -147,7 +147,7 @@ export const state = {
    * `<stateDir>/drafts/<key>.json`. A reload used to lose them, and a second device never saw them;
    * now they survive a reload and follow the user across devices.
    */
-  drafts: {} as Record<string, { text: string; at: number }>,
+  drafts: {} as Record<string, { text: string; at: number; images?: { mediaType: string; data: string }[] }>,
   /** The last `/api/bar` answer — the account's own quota reading, never the fitted estimate
    *  (usage-bar, 2026-08-26). Null until the first poll answers. */
   bar: null as BarReading | null,

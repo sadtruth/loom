@@ -176,8 +176,8 @@ export async function flushDraft(): Promise<void> {
   if (draftOwner.length > 0) {
     const text = ui.composerText.value;
     const at = Date.now();
-    if (text.length === 0) delete state.drafts[draftOwner];
-    else state.drafts[draftOwner] = { text, at };
+    if (text.length === 0 && state.attachments.length === 0) delete state.drafts[draftOwner];
+    else state.drafts[draftOwner] = { text, at, images: [...state.attachments] };
     mirrorDrafts();
     pendingKeys.add(draftOwner);
   }
@@ -251,12 +251,23 @@ export function keepDraft(): void {
  * typed for, and that session's own draft comes out. Called from every path that can change which
  * session the composer is talking to, and a no-op when the owner has not changed.
  */
+/** What else must follow the composer when the session under it changes. */
+const switchHooks: (() => void)[] = [];
+export function onDraftSwitch(fn: () => void): void {
+  switchHooks.push(fn);
+}
+
 export function switchDraft(): void {
   const now = draftKey();
   if (now === draftOwner) return;
   if (draftOwner.length > 0) keepDraft();
   draftOwner = now;
   ui.composerText.value = state.drafts[now]?.text ?? "";
+  // A pasted image belongs to the chat it was pasted into, exactly as the typed text does: it
+  // used to sit in one global strip and follow you into every other session (2026-09-18).
+  state.attachments = [...(state.drafts[now]?.images ?? [])];
+  drawAttachments();
+  for (const fn of switchHooks) fn();
   fitComposer();
   syncDock();
 

@@ -103,6 +103,7 @@ import {
   firstPermitCard,
   fitComposer,
   keepDraft,
+  onDraftSwitch,
   flushDraft,
   mirrorDrafts,
   pendingKey,
@@ -5454,4 +5455,6 @@ ui.composerText.addEventListener("keydown", (event) => {
   }
 });
 // A reload loses the page's memory of running gathers, not the gathers themselves.
+onDraftSwitch(() => prepromptPanel.showSession(state.sessionId));
+prepromptPanel.showSession(state.sessionId);
 void prepromptPanel.reattach();
