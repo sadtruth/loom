@@ -389,6 +389,11 @@ export default defineConfig({
       // the same leak `LOOM_SEEN_DIR` had, and `sealed.test.ts` is what caught it here before any
       // pin ran against a live agy session.
       LOOM_AGY_PROJECTS_ROOT: join(OUT, slotFor("test-results", i), "agy-projects"),
+      // The gatherer. Its runs and the root it may read stay inside the pin's own slot: the
+      // fallbacks are the vault and the home directory, and a pin must reach neither. No pin
+      // clicks gather yet; when one does, point LOOM_PREPROMPT_CMD at a fake as well.
+      LOOM_PREPROMPT_RUNS: join(OUT, slotFor("test-results", i), "preprompt-runs"),
+      LOOM_PREPROMPT_ROOT: join(ROOT, "tests", "fixture", slotFor("vault", i)),
       NODE_ENV: "test",
     },
   })),
