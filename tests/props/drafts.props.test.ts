@@ -51,6 +51,10 @@ describe("drafts filesystem properties", () => {
   test("a value survives a read after write, empty text deletes", async () => {
     await fc.assert(
       fc.asyncProperty(arbKey, arbDraft, async (key, draft) => {
+        // Reset file for each property run: a delete now leaves its time behind, and an earlier
+        // run's later delete on the same key would rightly refuse this run's older draft.
+        const draftPath = join(tmpDir, "drafts", `${key}.json`);
+        if (existsSync(draftPath)) rmSync(draftPath);
         await writeDraft(tmpDir, key, draft);
         const read = await readDraft(tmpDir, key);
         expect(read).toEqual(draft);
