@@ -23,7 +23,7 @@ import { openPath } from "./open.ts";
 import { MAX_BYTES, truncateUtf8, guardFrom, kindOf, listDir, locate, looksBinary, resolveWiki, wikiScope, contentDisposition, writableFile } from "./files.ts";
 import { stat } from "node:fs/promises";
 import { existsSync, readFileSync, type Stats } from "node:fs";
-import { PermitBroker, type Permit, type Verdict } from "./permits.ts";
+import { PermitBroker, readAnswers, type Permit, type Verdict } from "./permits.ts";
 import { MODEL_SPECS, asModelId } from "./models.ts";
 import { writePick, readAllPicks } from "./picks.ts";
 import { asEffort, asModel, Runner, type JobEvent, type JobState, type QueuedMessage } from "./input.ts";
@@ -436,7 +436,7 @@ const broker = new PermitBroker(
 // Both defaults are relative to loom's own directory, not to VAULT_ROOT: production serves from
 // the worktree at ~/wt/loom-prod, where climbing five levels out of server/ lands on the home
 // directory and the gatherer is not there. loom sits at <repo>/tools/loom, so its sibling is the
-// gatherer (2026-09-18: prod failed every gather with "Module not found /home/barin/tools/...").
+// gatherer (2026-09-18: prod failed every gather with "Module not found ~/tools/...").
 const TOOLS_DIR = join(import.meta.dir, "..", "..");
 const PREPROMPT_CMD = process.env["LOOM_PREPROMPT_CMD"]
   ? process.env["LOOM_PREPROMPT_CMD"]!.split(/\s+/)
@@ -2227,7 +2227,7 @@ const server = Bun.serve<SocketData, Routes>({
         if (typeof body.sessionId !== "string" || typeof body.toolName !== "string") {
           return json({ error: "sessionId and toolName required" }, 400);
         }
-        const verdict = await broker.ask(body.sessionId, body.toolName, body.toolInput ?? null);
+        const { verdict } = await broker.ask(body.sessionId, body.toolName, body.toolInput ?? null);
         return json({ verdict, reason: `loom: ${verdict === "allow" ? "allowed" : "denied"} by User` });
       },
     },
@@ -2236,11 +2236,15 @@ const server = Bun.serve<SocketData, Routes>({
       POST: async (req) => {
         const denied = requireAuth(req);
         if (denied !== null) return denied;
-        const body = (await req.json()) as { id?: unknown; verdict?: unknown };
+        const body = (await req.json()) as { id?: unknown; verdict?: unknown; answers?: unknown };
         if (typeof body.id !== "string" || (body.verdict !== "allow" && body.verdict !== "deny")) {
           return json({ error: "id and verdict allow|deny required" }, 400);
         }
-        const settled = broker.answer(body.id, body.verdict as Verdict);
+        const parsedAnswers = readAnswers(body.answers);
+        if (!parsedAnswers.ok) {
+          return json({ error: "answers must be a flat object of string to string" }, 400);
+        }
+        const settled = broker.answer(body.id, body.verdict as Verdict, parsedAnswers.answers);
         return settled ? json({ ok: true }) : json({ error: "no such pending permit" }, 404);
       },
     },

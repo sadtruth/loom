@@ -9,6 +9,7 @@
 
 import { renderMarkdown } from "./markdown.ts";
 import { commandGist, summariseRun } from "./gist.ts";
+import { renderAskDone } from "./question-card.ts";
 import type { BlockContext } from "./blocks.ts";
 import { turnSignature } from "./signature.ts";
 import { turnCostLabel } from "./turn-cost.ts";
@@ -258,6 +259,13 @@ function lazyBody(details: HTMLDetailsElement, build: () => Node[]): void {
 
 function renderTool(block: Block, result: Block | undefined): HTMLElement {
   const name = block.name ?? "tool";
+  // A completed AskUserQuestion gets the compact "you answered" summary (plan item 6), not the
+  // generic input/output disclosure every other tool gets — falls through to the generic body when
+  // the input isn't a real AskUserQuestion call (a malformed or truncated one).
+  if (name === "AskUserQuestion") {
+    const done = renderAskDone(block.input, result === undefined ? undefined : { isError: result.isError === true, text: result.text ?? "" });
+    if (done !== null) return done;
+  }
   const details = el("details", "tool");
   remember(details, block.id === undefined ? [] : [`tool:${block.id}`], false);
   if (result?.isError === true) details.classList.add("error");

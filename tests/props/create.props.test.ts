@@ -10,7 +10,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve, dirname } from "node:path";
+import { basename, join, resolve, dirname } from "node:path";
 import fc from "fast-check";
 import { createRecord, parseRecord, renameRecord, writeAtomic } from "../../server/tasks.ts";
 
@@ -149,5 +149,25 @@ describe("renameRecord", () => {
     const before = await readFile(child, "utf8");
     await expect(renameRecord(child, "New title", "What someone else saw")).rejects.toThrow(/changed under you/);
     expect(await readFile(child, "utf8")).toBe(before);
+  });
+});
+
+describe("createRecord folder names (bugs, 2026-09-28)", () => {
+  // Reported 2026-09-28: "cant create subprojects in work core". Russian titles all became `project`,
+  // `project-2` … and the eleventh was refused, so nothing was written.
+  test("a Cyrillic title gets a readable Latin folder", async () => {
+    const parent = await freshParent();
+    const { child } = await createRecord("Тестовый подпроект", parent, dirname(parent), "2026-09-28");
+    expect(basename(dirname(child))).toBe("testovyy-podproekt");
+  });
+
+  test("an eleventh same-named subproject is still created", async () => {
+    const parent = await freshParent();
+    const folders = new Set<string>();
+    for (let i = 0; i < 12; i += 1) {
+      const { child } = await createRecord("Same name", parent, dirname(parent), "2026-09-28");
+      folders.add(dirname(child));
+    }
+    expect(folders.size).toBe(12);
   });
 });

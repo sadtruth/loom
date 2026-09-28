@@ -72,6 +72,12 @@ try {
   };
   if (typeof payload.session_id !== "string" || typeof payload.tool_name !== "string") process.exit(0);
   if (READ_ONLY.has(payload.tool_name)) process.exit(0);
+  // AskUserQuestion is never decided here, whatever the policy or his `ask` rules say: only the
+  // `can_use_tool` control_request (server/input.ts, `--permission-prompt-tool stdio`) can carry
+  // the answer back on `updatedInput`. A hook-level "allow" runs the tool with no way to attach an
+  // answer, so this tool always falls through to that path instead — "no opinion" here, same as an
+  // unreadable ask list, which is exactly the fail-safe direction a permission gate needs.
+  if (payload.tool_name === "AskUserQuestion") process.exit(0);
   // On a deferred turn, only what he asked to be asked about. `matchesAsk` answers false for
   // anything it does not understand, so the failure direction is "no card" — never a card per tool
   // call, which is the 2026-08-05 measurement that made loom-driven sessions unusable.

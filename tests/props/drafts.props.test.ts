@@ -57,7 +57,8 @@ describe("drafts filesystem properties", () => {
 
         await writeDraft(tmpDir, key, { text: "", at: draft.at + 1 });
         const readDeleted = await readDraft(tmpDir, key);
-        expect(readDeleted).toEqual({ text: "", at: 0 });
+        // A delete keeps its time, so an older save cannot bring the text back.
+        expect(readDeleted).toEqual({ text: "", at: draft.at + 1 });
       })
     );
   });
@@ -97,5 +98,34 @@ describe("drafts filesystem properties", () => {
         expect(read).toEqual({ text: "", at: 0 });
       })
     );
+  });
+});
+
+describe("a sent message stays sent (bugs, 2026-09-28)", () => {
+  // Reported 2026-09-28: "sometimes when i send my message it is sent but the text remains in the input field".
+  // A send clears the draft; a save of the same text, made before the send but landing after it,
+  // must not bring the text back.
+  test("an older save that lands after the delete is refused", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "loom-drafts-late-"));
+    try {
+      const key = "session-a";
+      await writeDraft(dir, key, { text: "hello", at: 100 });
+      await writeDraft(dir, key, { text: "", at: 300 });
+      const late = await writeDraft(dir, key, { text: "hello", at: 200 });
+      expect(late).toEqual({ text: "", at: 300 });
+      expect(await readDraft(dir, key)).toEqual({ text: "", at: 300 });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("text typed after the delete is kept", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "loom-drafts-late-"));
+    try {
+      await writeDraft(dir, "session-b", { text: "", at: 300 });
+      expect(await writeDraft(dir, "session-b", { text: "next", at: 400 })).toEqual({ text: "next", at: 400 });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

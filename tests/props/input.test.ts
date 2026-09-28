@@ -5,6 +5,9 @@
  *
  * Plus the argv builder (SPEC 49): a picked model/thinking level reaches the child exactly once,
  * "default" adds no flag at all, and junk never becomes argv.
+ *
+ * Plus `buildPermitReply` (plan `ask-user-in-loom`, item 1): the `can_use_tool` control_response
+ * for one verdict, pure so the AskUserQuestion answers wiring is testable without a child process.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -14,6 +17,7 @@ import fc from "fast-check";
 import {
   asEffort,
   asModel,
+  buildPermitReply,
   childArgs,
   childMcpConfig,
   childSettings,
@@ -68,6 +72,59 @@ describe("childSettings", () => {
     const commands = commandsOf(childSettings("auto", root));
     expect(commands.some((c) => c.includes("connguard"))).toBe(false);
     expect(commands.some((c) => c.includes("permit.ts"))).toBe(true);
+  });
+});
+
+describe("buildPermitReply", () => {
+  const input = { questions: [{ question: "red or blue?", header: "Colour", options: [{ label: "blue" }] }] };
+
+  test("a single-select allow attaches answers keyed by the exact question text", () => {
+    expect(buildPermitReply("AskUserQuestion", input, "allow", { "red or blue?": "blue" })).toEqual({
+      behavior: "allow",
+      updatedInput: { ...input, answers: { "red or blue?": "blue" } },
+    });
+  });
+
+  test("a multi-select answer is whatever the caller already joined — buildPermitReply just attaches it", () => {
+    expect(
+      buildPermitReply("AskUserQuestion", input, "allow", { "which shelves?": "Personal library, Research library" }),
+    ).toEqual({
+      behavior: "allow",
+      updatedInput: { ...input, answers: { "which shelves?": "Personal library, Research library" } },
+    });
+  });
+
+  test("an Other answer rides in the same map, no different from a picked option", () => {
+    expect(buildPermitReply("AskUserQuestion", input, "allow", { "red or blue?": "green, actually" })).toEqual({
+      behavior: "allow",
+      updatedInput: { ...input, answers: { "red or blue?": "green, actually" } },
+    });
+  });
+
+  test("skip denies with the plain-text-instead message, not the generic denial", () => {
+    expect(buildPermitReply("AskUserQuestion", input, "deny")).toEqual({
+      behavior: "deny",
+      message: "The user skipped the question card; ask it in plain text in your reply instead.",
+    });
+  });
+
+  test("every other tool's reply is byte-identical to before answers existed", () => {
+    const writeInput = { file_path: "/tmp/x", content: "hi" };
+    expect(buildPermitReply("Write", writeInput, "allow")).toEqual({ behavior: "allow", updatedInput: writeInput });
+    expect(buildPermitReply("Write", writeInput, "deny")).toEqual({
+      behavior: "deny",
+      message: "loom: denied by User",
+    });
+    // Even if something upstream passed answers for a non-AskUserQuestion tool by mistake, they
+    // never reach that tool's input — answers is an AskUserQuestion-only concept.
+    expect(buildPermitReply("Write", writeInput, "allow", { stray: "answer" })).toEqual({
+      behavior: "allow",
+      updatedInput: writeInput,
+    });
+  });
+
+  test("an allow with no answers for AskUserQuestion falls back to the input unchanged", () => {
+    expect(buildPermitReply("AskUserQuestion", input, "allow")).toEqual({ behavior: "allow", updatedInput: input });
   });
 });
 

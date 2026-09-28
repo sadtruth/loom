@@ -3,6 +3,7 @@
  */
 
 import { dockState } from "./dock.ts";
+import { questionCard } from "./question-card.ts";
 import { spokenText } from "./render.ts";
 import { holdEnd, moveTranscript, stuck } from "./scroll.ts";
 import { toast } from "./status.ts";
@@ -164,6 +165,26 @@ function draftKey(): string {
 export let draftOwner = "";
 
 const draftTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+/**
+ * When a send last cleared each key's draft. A save or its echo can already be on the way when the
+ * send clears the box; without this time the cleared draft counts as "nothing, time 0", the late
+ * save looks newer, and the sent text comes back (bugs, 2026-09-28). Memory only: it has to outlast
+ * a few seconds of network, not a reload.
+ */
+const draftClearedAt = new Map<string, number>();
+
+/** Note that a send cleared `key`'s draft now; returns the time to send with the delete. */
+export function noteDraftCleared(key: string): number {
+  const at = Date.now();
+  draftClearedAt.set(key, at);
+  return at;
+}
+
+/** The time a draft update for `key` has to beat to replace what this device holds. */
+export function localDraftAt(key: string): number {
+  return Math.max(state.drafts[key]?.at ?? 0, draftClearedAt.get(key) ?? 0);
+}
 const DRAFT_DEBOUNCE_MS = 400;
 
 export async function flushDraft(): Promise<void> {
@@ -282,8 +303,7 @@ export function switchDraft(): void {
       const { text, at } = data as { text?: string; at?: number };
       if (typeof text !== "string" || typeof at !== "number") return;
 
-      const local = state.drafts[now];
-      const localAt = local ? local.at : 0;
+      const localAt = localDraftAt(now);
       if (at > localAt) {
         if (text.length === 0) delete state.drafts[now];
         else state.drafts[now] = { text, at };
@@ -416,6 +436,14 @@ export function permitCard(permit: Permit): HTMLElement {
   const cached = permitNodes.get(permit.id);
   if (cached !== undefined) return cached;
 
+  // AskUserQuestion needs answers back, not just a verdict — its own card, its own file
+  // (question-card.ts), because composer.ts is already the biggest file in the client.
+  if (permit.toolName === "AskUserQuestion") {
+    const card = questionCard(permit, answerPermit);
+    permitNodes.set(permit.id, card);
+    return card;
+  }
+
   const card = document.createElement("div");
   card.className = "permit";
   card.setAttribute("aria-live", "polite");
@@ -467,12 +495,16 @@ export function pendingPermits(): Permit[] {
   return [...state.permits].sort((a, b) => permitAt(a) - permitAt(b));
 }
 
-async function answerPermit(id: string, verdict: "allow" | "deny"): Promise<void> {
+export async function answerPermit(
+  id: string,
+  verdict: "allow" | "deny",
+  answers?: Record<string, string>,
+): Promise<void> {
   try {
     const response = await fetch("/api/permit/answer", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ id, verdict }),
+      body: JSON.stringify(answers === undefined ? { id, verdict } : { id, verdict, answers }),
     });
     if (!response.ok) {
       const body = (await response.json()) as { error?: string };

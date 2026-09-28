@@ -14,6 +14,8 @@
  * `tools/project-guard/lint.py` already enforces, so the linter is the test for what loom writes.
  */
 
+import { folderSlug, slugify } from "./slug.ts";
+export { folderSlug, slugify } from "./slug.ts";
 import { invalidateRecords } from "./records.ts";
 import { mkdir, rename } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -553,15 +555,6 @@ export async function writeAtomic(path: string, text: string): Promise<void> {
   invalidateRecords();
 }
 
-export function slugify(title: string, fallback: string): string {
-  const slug = title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 48)
-    .replace(/-+$/, "");
-  return slug.length > 0 ? slug : fallback;
-}
 
 export interface Promotion {
   /** Absolute path of the child record. */
@@ -571,7 +564,8 @@ export interface Promotion {
 }
 
 async function freeDir(dir: string, slug: string): Promise<string> {
-  for (let attempt = 0; attempt < 10; attempt += 1) {
+  // A thousand is a runaway guard, not a limit anyone should meet.
+  for (let attempt = 0; attempt < 1000; attempt += 1) {
     const name = attempt === 0 ? slug : `${slug}-${attempt + 1}`;
     const path = join(dir, name);
     if (!(await Bun.file(join(path, "project.md")).exists())) return path;
@@ -729,7 +723,7 @@ export async function createRecord(
   if (name.length === 0) throw new Error("a project needs a title");
 
   const home = parentRecordPath === null ? rootDir : dirname(parentRecordPath);
-  const dir = await freeDir(home, slugify(name, "project"));
+  const dir = await freeDir(home, folderSlug(name, "project"));
   await mkdir(dir, { recursive: true });
   const child = join(dir, "project.md");
   const parentFile = parentRecordPath === null ? null : basename(parentRecordPath);

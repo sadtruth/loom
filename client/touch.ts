@@ -16,11 +16,29 @@ export interface TouchOptions {
   isDrawerOpen: () => boolean;
 }
 
+/**
+ * Every element from `el` up to `stop`, plus the page, that is wider than its box, with its scroll
+ * position now. A swipe that moved any of them was a sideways scroll of a wide table or code block,
+ * not a request for a panel (bugs, 2026-09-28). Comparing positions, rather than refusing every swipe
+ * that starts inside something wide, keeps the gesture working when a wide table merely makes the
+ * whole transcript scrollable, and when the wide element is already at its edge.
+ */
+function sideScrollers(el: HTMLElement | null, stop: HTMLElement): Array<[Element, number]> {
+  const found: Array<[Element, number]> = [];
+  for (let node = el; node !== null && node !== stop; node = node.parentElement) {
+    if (node.scrollWidth > node.clientWidth + 1) found.push([node, node.scrollLeft]);
+  }
+  const page = document.scrollingElement;
+  if (page !== null && page.scrollWidth > page.clientWidth + 1) found.push([page, page.scrollLeft]);
+  return found;
+}
+
 export function wireTouchGestures(layout: HTMLElement, options: TouchOptions): () => void {
   let startX = 0;
   let startY = 0;
   let startTime = 0;
   let tracking = false;
+  let scrollersAtStart: Array<[Element, number]> = [];
 
   function onTouchStart(e: TouchEvent): void {
     if (e.touches.length !== 1) {
@@ -47,6 +65,7 @@ export function wireTouchGestures(layout: HTMLElement, options: TouchOptions): (
     startX = touch.clientX;
     startY = touch.clientY;
     startTime = Date.now();
+    scrollersAtStart = sideScrollers(target, layout);
     tracking = true;
   }
 
@@ -68,6 +87,9 @@ export function wireTouchGestures(layout: HTMLElement, options: TouchOptions): (
 
     // Filter out vertical scrolling: horizontal movement must exceed threshold and dominate vertical delta
     if (absX < 45 || absX < 1.4 * absY) return;
+    // The swipe scrolled something wide sideways - that was the point of it
+    if (scrollersAtStart.some(([node, left]) => node.scrollLeft !== left)) return;
+
     // Discard slow drags (over 800ms)
     if (elapsed > 800) return;
 

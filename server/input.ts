@@ -34,6 +34,7 @@ import { WORKING_SILENCE_MS } from "./activity.ts";
 import { agyArgs, agyStdinLine, appendShadowTranscriptSync, getAgyConversation, writeAgyConversationSync } from "./agy.ts";
 import { AgyFrameTranslator } from "./agy-frames.ts";
 import type { AskRule } from "./askrules.ts";
+import type { Answers, Verdict } from "./permits.ts";
 import { asModelId, runnerOf, type RunnerKind } from "./models.ts";
 import {
   closeQuietly,
@@ -98,6 +99,38 @@ export interface JobEvent {
  * cards — every mutating call raises a permit card; the classifier never runs.
  */
 export type PermissionStyle = "auto" | "cards";
+
+/**
+ * The `can_use_tool` control_response for one verdict (Agent SDK convention — what VS Code sends
+ * back too). Pure and exported so the answers wiring is testable without a child process.
+ *
+ * AskUserQuestion carries `answers` on the input it goes back with — keyed by the exact question
+ * text, multi-select joined with ", " — so the CLI can read the answer straight off the tool call
+ * it actually ran. A skipped question card denies with a message that tells Claude to ask in plain
+ * text instead, rather than the generic denial every other tool gets. Every other tool's reply is
+ * unchanged: `answers` only ever touches AskUserQuestion.
+ */
+export function buildPermitReply(
+  toolName: string,
+  input: unknown,
+  verdict: Verdict,
+  answers?: Answers,
+): { behavior: "allow"; updatedInput: unknown } | { behavior: "deny"; message: string } {
+  if (verdict === "deny") {
+    return {
+      behavior: "deny",
+      message:
+        toolName === "AskUserQuestion"
+          ? "The user skipped the question card; ask it in plain text in your reply instead."
+          : "loom: denied by User",
+    };
+  }
+  if (toolName === "AskUserQuestion" && answers !== undefined) {
+    const base = typeof input === "object" && input !== null ? (input as Record<string, unknown>) : {};
+    return { behavior: "allow", updatedInput: { ...base, answers } };
+  }
+  return { behavior: "allow", updatedInput: input };
+}
 
 /**
  * The pickable models and thinking levels (SPEC 49). Both are ALLOWLISTS, not free strings: the
@@ -671,9 +704,14 @@ export class Runner {
 
   /** Called once at startup, after the settings file has been read. */
   /** Wired by the server to the permit broker, so a `can_use_tool` request becomes a card. */
-  private askPermission: (sessionId: string, toolName: string, input: unknown) => Promise<"allow" | "deny"> =
-    async () => "deny";
-  setAskPermission(ask: (sessionId: string, toolName: string, input: unknown) => Promise<"allow" | "deny">): void {
+  private askPermission: (
+    sessionId: string,
+    toolName: string,
+    input: unknown,
+  ) => Promise<{ verdict: Verdict; answers?: Answers }> = async () => ({ verdict: "deny" });
+  setAskPermission(
+    ask: (sessionId: string, toolName: string, input: unknown) => Promise<{ verdict: Verdict; answers?: Answers }>,
+  ): void {
     this.askPermission = ask;
   }
 
@@ -1344,11 +1382,8 @@ export class Runner {
       if (request?.["subtype"] === "can_use_tool" && typeof requestId === "string") {
         const toolName = typeof request["tool_name"] === "string" ? request["tool_name"] : "unknown";
         const input = request["input"];
-        void this.askPermission(sessionId, toolName, input).then((verdict) => {
-          const decision =
-            verdict === "allow"
-              ? { behavior: "allow", updatedInput: input }
-              : { behavior: "deny", message: "loom: denied by User" };
+        void this.askPermission(sessionId, toolName, input).then(({ verdict, answers }) => {
+          const decision = buildPermitReply(toolName, input, verdict, answers);
           writeLine(child.stdinFd, JSON.stringify({
             type: "control_response",
             response: { subtype: "success", request_id: requestId, response: decision },

@@ -88,7 +88,8 @@ export async function readAll(dir: string = seenDir()): Promise<SeenState> {
 }
 
 /**
- * Merges patch into this device's own file, caps seen to 300 newest entries, and writes atomically.
+ * Merges patch into this device's own file, caps seen to 300 newest entries (raising the
+ * watermark over the ones it drops), and writes atomically.
  * Only ever touches this device's own file.
  */
 export async function writeOwn(patch: unknown, dir: string = seenDir(), host?: string): Promise<void> {
@@ -102,11 +103,13 @@ export async function writeOwn(patch: unknown, dir: string = seenDir(), host?: s
     }
   }
   const merged = mergeSeen([current, patch]);
-  const sortedEntries = Object.entries(merged.seen)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 300);
+  const byNewest = Object.entries(merged.seen).sort((a, b) => b[1] - a[1]);
+  const sortedEntries = byNewest.slice(0, 300);
+  // A dropped entry was read up to its value. Unless the watermark rises to cover it, that session
+  // counts as unread again the moment it falls off the list (bugs, 2026-09-28: 61 of 62 "new" marks).
+  const droppedNewest = byNewest[300]?.[1] ?? 0;
   const capped: SeenState = {
-    watermark: merged.watermark,
+    watermark: Math.max(merged.watermark, droppedNewest),
     seen: Object.fromEntries(sortedEntries),
   };
 

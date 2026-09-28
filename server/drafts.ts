@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 export interface Draft {
@@ -45,14 +45,8 @@ export async function writeDraft(stateDir: string, key: string, draft: Draft): P
   const current = await readDraft(stateDir, key);
   if (draft.at < current.at) return current;
 
-  if (draft.text.length === 0) {
-    try {
-      await unlink(path);
-    } catch (e: any) {
-      if (e.code !== "ENOENT") throw e;
-    }
-    return draft;
-  }
+  // An empty draft is written, not unlinked: the file keeps the time of the delete, so a save made
+  // before a send but landing after it is older and cannot put the sent text back (bugs, 2026-09-28).
 
   await mkdir(dirname(path), { recursive: true });
   const tmp = `${path}.loom-tmp-${Date.now()}-${Math.random().toString(36).slice(2)}`;

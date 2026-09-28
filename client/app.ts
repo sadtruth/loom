@@ -117,6 +117,8 @@ import {
   switchDraft,
   syncDock,
   undrawnEchoes,
+  localDraftAt,
+  noteDraftCleared,
 } from "./composer.ts";
 import { mountPreprompt } from "./preprompt.ts";
 import { sameBundle, styleHashOf } from "./bundle.ts";
@@ -1140,8 +1142,10 @@ function markSeen(): void {
   if (newest <= (state.seen[state.sessionId] ?? 0)) return;
   state.seen[state.sessionId] = newest;
   // Bounded: the 300 most recently read sessions are plenty to remember.
-  const entries = Object.entries(state.seen).sort((a, b) => b[1] - a[1]).slice(0, 300);
-  state.seen = Object.fromEntries(entries);
+  // What falls off raises the watermark, as the server's seen store does, or it shows as unread again.
+  const byNewest = Object.entries(state.seen).sort((a, b) => b[1] - a[1]);
+  state.watermark = Math.max(state.watermark, byNewest[300]?.[1] ?? 0);
+  state.seen = Object.fromEntries(byNewest.slice(0, 300));
   void fetch("/api/seen", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -2097,7 +2101,8 @@ function drawTree(): void {
       }
       ui.tree.append(row);
       // A new subproject's title sits directly under its parent, above the children it joins.
-      if (treeInput !== null && treeInput.kind === "create" && treeInput.record === record.path) {
+      // So does the verdict of a project being marked done.
+      if (treeInput !== null && treeInput.kind !== "rename" && treeInput.record === record.path) {
         ui.tree.append(titleInput(treeInput));
         inputDrawn = true;
       }
@@ -2239,6 +2244,7 @@ function openTreeMenu(x: number, y: number, record: RecordInfo, depth: number): 
   openContextMenu(x, y, [
     { label: "+ subproject", act: () => openCreateInput(record.path, depth + 1) },
     { label: "rename", act: () => openRenameInput(record, depth) },
+    ...(record.status === "done" ? [] : [{ label: "mark done", act: () => openDoneInput(record, depth) }]),
     { label: "---", act: () => {} },
     { label: "copy link", act: () => copyRecordLink(record.path) },
   ]);
@@ -2259,8 +2265,8 @@ function openTreeMenu(x: number, y: number, record: RecordInfo, depth: number): 
  * the other session just created appears in the same frame.
  */
 interface TreeInput {
-  kind: "create" | "rename";
-  /** create: the parent record, null for a root. rename: the record being renamed. */
+  kind: "create" | "rename" | "done";
+  /** create: the parent record, null for a root. rename: the record being renamed. done: the record being closed. */
   record: string | null;
   /** rename: the title held when the input opened — the `expect` the save is checked against. */
   initial: string;
@@ -2291,6 +2297,7 @@ function titleInput(state: TreeInput): HTMLDivElement {
   const input = document.createElement("input");
   input.type = "text";
   if (state.kind === "create") input.placeholder = state.record === null ? "new project title" : "subproject title";
+  if (state.kind === "done") input.placeholder = "verdict - what landed, what did not";
   input.value = state.value;
   holder.append(input);
 
@@ -2302,8 +2309,9 @@ function titleInput(state: TreeInput): HTMLDivElement {
     if (settled) return;
     const title = value?.trim() ?? "";
     closeTreeInput();
-    if (title.length === 0 || title === state.initial) drawTree();
+    if (title.length === 0 || (state.kind !== "done" && title === state.initial)) drawTree();
     else if (state.kind === "create") void submitCreate(title, state.record);
+    else if (state.kind === "done") { if (state.record !== null) void writeRecordStatus(state.record, state.initial, "done", title); }
     else if (state.record !== null) void submitRename(state.record, title, state.initial);
   };
   const track = (): void => {
@@ -2341,6 +2349,17 @@ function openRenameInput(record: RecordInfo, depth: number): void {
     // Opened selected, so the first keystroke replaces the old title — the ordinary rename gesture.
     sel: [0, record.title.length],
   };
+  drawTree();
+}
+
+/**
+ * "mark done" from a row's menu (asked 2026-09-28). Done needs a one-line verdict (SPEC 65), so the
+ * menu opens a verdict line under the row instead of closing the project blind. `initial` carries
+ * the status the scan showed: the `expect` the server checks the write against.
+ */
+function openDoneInput(record: RecordInfo, depth: number): void {
+  closeTreeInput();
+  treeInput = { kind: "done", record: record.path, initial: record.status, depth: depth + 1, value: "", sel: [0, 0] };
   drawTree();
 }
 
@@ -3415,7 +3434,8 @@ async function writeRecordStatus(
       return;
     }
     await loadRecords();
-    await showRecord(path);
+    // The tree menu can close a record other than the open one; the tab keeps showing its own.
+    if (state.activeRecord === path) await showRecord(path);
     toast(status === "done" ? "project marked done" : `project reopened — ${status}`);
   } catch (error) {
     toast(`could not write the status: ${String(error)}`, true);
@@ -3820,13 +3840,14 @@ async function sendMessage(): Promise<void> {
     ui.composerText.value = "";
     cancelDraftTimer(draftOwner);
     delete state.drafts[draftOwner];
+    const clearedAt = noteDraftCleared(draftOwner);
     mirrorDrafts();
 
     // R6: A successful send POSTs a delete and removes the key from localStorage.
     fetch("/api/draft", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key: draftOwner, text: "", at: Date.now() }),
+      body: JSON.stringify({ key: draftOwner, text: "", at: clearedAt }),
     }).catch(() => {});
 
     fitComposer();
@@ -4087,8 +4108,7 @@ function connect(rejoin = false): void {
       return;
     }
     if (frame.type === "draft") {
-      const local = state.drafts[frame.key];
-      const localAt = local ? local.at : 0;
+      const localAt = localDraftAt(frame.key);
       if (frame.at > localAt) {
         if (frame.text.length === 0) delete state.drafts[frame.key];
         else state.drafts[frame.key] = { text: frame.text, at: frame.at };

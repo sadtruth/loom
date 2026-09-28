@@ -6,6 +6,7 @@
  * P-seen-3: Merged watermark is the minimum positive one; all-zero/absent yields 0.
  * P-seen-4: Corrupted files (bad types, negative numbers, strings) are ignored and do not destroy good entries.
  * P-seen-5: writeOwn caps at 300 entries, keeping the 300 newest by value, and never touches another device's file.
+ *   The entries it drops raise that file's watermark to the newest dropped value.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -130,7 +131,9 @@ describe("writeOwn and readAll filesystem properties", () => {
     expect(existsSync(fileA)).toBe(true);
     const contentA = JSON.parse(readFileSync(fileA, "utf8")) as SeenState;
     expect(Object.keys(contentA.seen).length).toBe(300);
-    expect(contentA.watermark).toBe(5000);
+    // Dropping entries raises the watermark to the newest dropped value (session-50 = 50000),
+    // or a dropped session that was read shows as unread again (bugs, 2026-09-28).
+    expect(contentA.watermark).toBe(50000);
 
     // Verify it kept the 300 newest by value (sessions 51 to 350, dropping 1 to 50)
     for (let i = 1; i <= 50; i++) {
