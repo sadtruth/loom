@@ -22,7 +22,8 @@ import { addAccept, readAccepts, type Accept } from "./accepts.ts";
 import { openPath } from "./open.ts";
 import { MAX_BYTES, truncateUtf8, guardFrom, kindOf, listDir, locate, looksBinary, resolveWiki, wikiScope, contentDisposition, writableFile } from "./files.ts";
 import { stat } from "node:fs/promises";
-import { existsSync, readFileSync, type Stats } from "node:fs";
+import { existsSync, readdirSync, readFileSync, type Stats } from "node:fs";
+import { heapStats } from "bun:jsc";
 import { PermitBroker, readAnswers, type Permit, type Verdict } from "./permits.ts";
 import { MODEL_SPECS, asModelId } from "./models.ts";
 import { writePick, readAllPicks } from "./picks.ts";
@@ -392,6 +393,32 @@ const watchers = new Map<string, Watcher>();
 // reconnect path, since a pin cannot put the laptop to sleep.
 const liveSockets = new Set<Bun.ServerWebSocket<SocketData>>();
 
+/** Server memory for `/api/memory`. With `gc`, a full collection runs first, so two reads compare
+ *  what is retained rather than what is merely not yet collected. Added 2026-09-30: the server
+ *  grew from ~300 MB to 845 MB in 9 hours and to 1.5 GB in 21 hours. */
+function memoryReport(gc: boolean): unknown {
+  if (gc) Bun.gc(true);
+  const stats = heapStats();
+  return {
+    uptimeSec: Math.round(process.uptime()),
+    process: process.memoryUsage(),
+    heap: {
+      size: stats.heapSize,
+      capacity: stats.heapCapacity,
+      extra: stats.extraMemorySize,
+      objects: stats.objectCount,
+      protected: stats.protectedObjectCount,
+    },
+    live: {
+      watchers: watchers.size,
+      sockets: liveSockets.size,
+      adopted: adopted.size,
+      lastRecap: lastRecap.size,
+    },
+    types: Object.fromEntries(Object.entries(stats.objectTypeCounts).sort((a, b) => b[1] - a[1])),
+  };
+}
+
 function sessionTranscriptPath(projectKey: string, sessionId: string): string | null {
   return transcriptPath(projectKey, sessionId, ROOT, AGY_ROOT);
 }
@@ -422,8 +449,25 @@ function broadcastToSession(sessionId: string, frame: Parameters<Watcher["broadc
   }
 }
 
-/** Identifies this run of the server. A client comparing it against its own tells staleness. */
-const BUILD = `${Math.floor(Date.now() / 1000).toString(36)}`;
+/** Identifies the client code this server bundles. A client comparing it against its own tells
+ *  staleness. It hashes the client sources and the package lock rather than stamping the start time:
+ *  a restart that changes nothing (the kernel killing a session's child for memory takes the whole
+ *  unit down, and systemd brings it back) was lighting "loom was updated" with nothing new to load. */
+const BUILD = (() => {
+  const root = join(import.meta.dir, "..");
+  const clientDir = join(root, "client");
+  const files = readdirSync(clientDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => join(clientDir, entry.name))
+    .sort();
+  const hasher = new Bun.CryptoHasher("sha256");
+  for (const path of [...files, join(root, "package.json"), join(root, "bun.lock")]) {
+    if (!existsSync(path)) continue;
+    hasher.update(path.slice(root.length));
+    hasher.update(readFileSync(path));
+  }
+  return hasher.digest("hex").slice(0, 12);
+})();
 
 const broker = new PermitBroker(
   (sessionId) => broadcastToSession(sessionId, { type: "permits", permits: broker.forSession(sessionId) }),
@@ -542,6 +586,7 @@ type Routes =
   | "/sw.js"
   | "/vendor/mermaid/*"
   | "/api/build"
+  | "/api/memory"
   | "/api/projects"
   | "/api/projects/:key/sessions"
   | "/api/records/sessions"
@@ -752,9 +797,12 @@ const server = Bun.serve<SocketData, Routes>({
       return new Response(Bun.file(path), { headers: { "content-type": "text/javascript" } });
     },
 
-    // Changes on every restart, so a page left open can notice its own bundle is stale and say so
-    // instead of quietly showing yesterday's UI. Tokenless like the shell above: it is one number.
+    // Changes when the client code changes, so a page left open can notice its own bundle is stale
+    // and say so instead of quietly showing yesterday's UI. Tokenless like the shell above: it is
+    // one hash.
     "/api/build": () => json({ build: BUILD }),
+    // What the server holds in memory. Two reads taken an hour apart show which object types climb.
+    "/api/memory": (req) => requireAuth(req) ?? json(memoryReport(new URL(req.url).searchParams.has("gc"))),
 
     "/api/projects": async (req) => requireAuth(req) ?? json(await listProjects([ROOT, AGY_ROOT])),
 
