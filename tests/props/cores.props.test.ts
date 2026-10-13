@@ -92,6 +92,13 @@ describe("cwdFor", () => {
     );
   });
 
+  test("a record inside a core's own folder outside the vault runs in that core", () => {
+    const outside = "/elsewhere/vault";
+    for (const c of CORES) {
+      expect(cwdFor(`${c.cwd}/projects/x/project.md`, outside, CORES, always)).toBe(c.cwd);
+    }
+  });
+
   test("inside the vault it is always one of the declared cores", () => {
     fc.assert(
       fc.property(segment, (name) => {

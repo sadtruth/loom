@@ -196,7 +196,11 @@ export function cwdFor(
   cores: readonly Core[] = CORES,
   exists: (p: string) => boolean = existsSync,
 ): string {
-  if (!under(recordPath, vaultRoot)) return dirname(resolve(recordPath));
+  // Inside means the vault OR a core's own tree. Since 2026-10-13 the work
+  // records live in ~/projects/smotrim, outside the vault; treating them as
+  // their own directory sent loom to an empty store and hid every session.
+  const insideCore = cores.some((c) => under(recordPath, c.cwd) || c.owns.some((o) => under(recordPath, o)));
+  if (!under(recordPath, vaultRoot) && !insideCore) return dirname(resolve(recordPath));
   const core = coreFor(recordPath, cores);
   if (exists(core.cwd)) return core.cwd;
   const fallback = defaultCore(cores);
