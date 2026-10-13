@@ -176,7 +176,11 @@ test.describe("on the phone", () => {
 
     const composer = page.locator("#composer-text");
     await composer.fill("quiet please");
+    // On a phone Return adds a new line and only the send button sends (item 98).
     await composer.press("Enter");
+    await expect(composer).toHaveValue("quiet please\n");
+    await composer.fill("quiet please");
+    await page.locator("#composer-send").tap();
 
     const state = page.locator("#composer-state");
     await expect(state).toContainText(/^running the thing that hangs/, { timeout: 10_000 });

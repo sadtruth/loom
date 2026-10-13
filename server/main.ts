@@ -24,6 +24,7 @@ import { MAX_BYTES, truncateUtf8, guardFrom, kindOf, listDir, locate, looksBinar
 import { stat } from "node:fs/promises";
 import { existsSync, readdirSync, readFileSync, type Stats } from "node:fs";
 import { heapStats } from "bun:jsc";
+import { instrumentRoutes, instrumentSocket, requestTotals, startMemoryLog } from "./memlog.ts";
 import { PermitBroker, readAnswers, type Permit, type Verdict } from "./permits.ts";
 import { MODEL_SPECS, asModelId } from "./models.ts";
 import { writePick, readAllPicks } from "./picks.ts";
@@ -415,6 +416,8 @@ function memoryReport(gc: boolean): unknown {
       adopted: adopted.size,
       lastRecap: lastRecap.size,
     },
+    // RSS change while each kind of request ran, since start (memlog.ts).
+    requests: requestTotals(),
     types: Object.fromEntries(Object.entries(stats.objectTypeCounts).sort((a, b) => b[1] - a[1])),
   };
 }
@@ -754,7 +757,7 @@ const server = Bun.serve<SocketData, Routes>({
   // page under the user's hands. loom has its own update bar (#update-bar, fed by /api/build).
   development: Bun.env["NODE_ENV"] === "production" ? false : { hmr: false, console: false },
 
-  routes: {
+  routes: instrumentRoutes({
     "/": index,
 
     "/login": (req) => loginResponse(req, TOKEN, PORT),
@@ -2436,7 +2439,7 @@ const server = Bun.serve<SocketData, Routes>({
         return json(await openPath(body.path));
       },
     },
-  },
+  }),
 
   async fetch(req) {
     const url = new URL(req.url);
@@ -2454,7 +2457,7 @@ const server = Bun.serve<SocketData, Routes>({
     return new Response("upgrade failed", { status: 400 });
   },
 
-  websocket: {
+  websocket: instrumentSocket({
     async open(socket) {
       liveSockets.add(socket);
       const [key = "", id = ""] = socket.data.watchKey.split("/");
@@ -2523,8 +2526,9 @@ const server = Bun.serve<SocketData, Routes>({
     message() {
       // Phase one is read-only: the client has nothing to say. See SPEC "Out of scope".
     },
-  },
+  }),
 });
+startMemoryLog(() => `watchers ${watchers.size} · sockets ${liveSockets.size}`);
 
 console.log(`loom → ${server.url}`);
 console.log(`  transcripts:     ${ROOT}`);

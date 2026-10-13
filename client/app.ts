@@ -5365,8 +5365,12 @@ ui.composerText.addEventListener("paste", (event) => {
   }
 });
 
+// On a phone the on-screen Return key adds a new line and only the send button sends;
+// a desk keyboard keeps Enter-to-send. The query is read per keypress, so a tablet that
+// gains a mouse switches over without a reload.
+const touchFirst = window.matchMedia("(hover: none) and (pointer: coarse)");
 ui.composerText.addEventListener("keydown", (event) => {
-  if (event.key === "Enter" && !event.shiftKey) {
+  if (event.key === "Enter" && !event.shiftKey && !touchFirst.matches) {
     event.preventDefault();
     void sendMessage();
   }
