@@ -74,6 +74,8 @@ export const VAULT = Bun.env["LOOM_CORE_VAULT"] ?? join(homedir(), "resilio", "d
 export const SPOUSE_LABEL = Bun.env["LOOM_SPOUSE_LABEL"] ?? "Spouse";
 export const SPOUSE_CORE = Bun.env["LOOM_SPOUSE_CORE"] ?? `${VAULT}/Projects/Spouse Claude`;
 export const SPOUSE_DIR = Bun.env["LOOM_SPOUSE_DIR"] ?? `${VAULT}/Areas/Family/spouse`;
+// The personal core's code folder. It left the vault on 2026-10-13 (Projects/obsidian/design.md).
+export const PERSONAL_CORE = Bun.env["LOOM_PERSONAL_CORE"] ?? `${VAULT}/Projects/Personal Claude`;
 
 /**
  * Ordered MOST SPECIFIC FIRST — `coreFor` takes the first match, so a core with no prefixes must be
@@ -103,7 +105,7 @@ export const CORES: readonly Core[] = [
   {
     id: "personal",
     label: "Personal",
-    cwd: `${VAULT}/Projects/Personal Claude`,
+    cwd: PERSONAL_CORE,
     owns: [],
     home: `${VAULT}/Projects`,
   },

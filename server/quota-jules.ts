@@ -74,6 +74,7 @@ export function resolveJulesKey(keyIndex: 1 | 2 = 1): string | null {
   const candidatePaths = [
     resolve(process.cwd(), `tools/jules/${keyFileName}`),
     resolve(process.cwd(), `../jules/${keyFileName}`),
+    join(homedir(), `projects/personal/tools/jules/${keyFileName}`),
     join(homedir(), `resilio/docs/Projects/Personal Claude/tools/jules/${keyFileName}`),
     join(homedir(), `looms/gpro/docs/Projects/Personal Claude/tools/jules/${keyFileName}`),
   ];
