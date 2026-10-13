@@ -365,6 +365,7 @@ export default defineConfig({
       // records rather than the real `~/resilio/docs`, so a fixture record is never "in the vault"
       // and keeps its own directory as its child's cwd — see the note in make-fixture.ts.
       LOOM_CORE_VAULT: join(ROOT, "tests", "fixture", slotFor("vault", i)),
+      LOOM_PERSONAL_CORE: join(ROOT, "tests", "fixture", slotFor("vault", i), "Projects", "Personal Claude"),
       // What this device has read (server/seen.ts). Left unset it falls back to
       // `<LOOM_CORE_VAULT>/Projects/Personal Claude/tools/loom/seen` — which, before
       // LOOM_CORE_VAULT existed, was User's REAL seen file: every pin run read his watermark and
