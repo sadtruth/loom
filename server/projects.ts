@@ -2,7 +2,7 @@
  * Enumerate the Claude Code transcript store.
  *
  * Directory names are the absolute project path with "/" and "." replaced by "-", which is lossy:
- * "-Users-serbir-docs-Projects-Personal-Claude" cannot be mechanically unescaped back to a path
+ * "-Users-serbir-projects-personal" cannot be mechanically unescaped back to a path
  * containing a space. So the real cwd is read out of the transcript itself (row.cwd), and the
  * escaped name is only ever a key.
  */

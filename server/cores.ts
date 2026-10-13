@@ -75,6 +75,9 @@ export const SPOUSE_LABEL = Bun.env["LOOM_SPOUSE_LABEL"] ?? "Spouse";
 export const SPOUSE_CORE = Bun.env["LOOM_SPOUSE_CORE"] ?? `${VAULT}/Projects/Spouse Claude`;
 export const SPOUSE_DIR = Bun.env["LOOM_SPOUSE_DIR"] ?? `${VAULT}/Areas/Family/spouse`;
 // The personal core's code folder. It left the vault on 2026-10-13 (Projects/obsidian/design.md).
+// The work core's code folder, and the vault folder its notes moved to (2026-10-13, same design).
+export const WORK_CORE = Bun.env["LOOM_WORK_CORE"] ?? `${VAULT}/Projects/claude`;
+export const WORK_NOTES = Bun.env["LOOM_WORK_NOTES"] ?? WORK_CORE;
 export const PERSONAL_CORE = Bun.env["LOOM_PERSONAL_CORE"] ?? `${VAULT}/Projects/Personal Claude`;
 
 /**
@@ -90,10 +93,10 @@ export const CORES: readonly Core[] = [
   {
     id: "work",
     label: "Work",
-    cwd: `${VAULT}/Projects/claude`,
-    owns: [`${VAULT}/Projects/claude`],
-    home: `${VAULT}/Projects/claude/projects`,
-    records: { dir: `${VAULT}/Projects/claude/epics`, file: "README.md", skip: ["архив"] },
+    cwd: WORK_CORE,
+    owns: [...new Set([WORK_CORE, WORK_NOTES])],
+    home: `${WORK_CORE}/projects`,
+    records: { dir: `${WORK_CORE}/epics`, file: "README.md", skip: ["архив"] },
   },
   {
     id: "spouse",

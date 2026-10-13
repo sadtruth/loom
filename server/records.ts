@@ -166,7 +166,8 @@ async function folderRecords(spec: FolderRecords): Promise<RecordInfo[]> {
 
   const records: RecordInfo[] = [];
   for (const entry of entries) {
-    if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+    // An epic whose notes moved to the vault is a link in the code folder (vault-move, 2026-10-13).
+    if (!(entry.isDirectory() || entry.isSymbolicLink()) || entry.name.startsWith(".")) continue;
     if (spec.skip.includes(entry.name) || SKIP_DIRS.has(entry.name)) continue;
     const file = join(resolve(spec.dir), entry.name, spec.file);
     try {
