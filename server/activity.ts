@@ -342,6 +342,27 @@ export async function listActivityForDirs(dirs: readonly string[], now: number =
   return out;
 }
 
+/** One listing per set of store directories, for the length of one request. `/api/activity` asks
+ * for the same core store once per record - about 300 records share the vault's core store of ~600
+ * transcripts - and listing it each time cost ~1 s of CPU and tens of MB on every 15-second poll of
+ * every open page (2026-10-28). The same dirs get the same promise, so callers share the session
+ * objects: fine for reads, and for writes that depend only on the session (`running = true`).
+ * Make a new one per request - it never notices a transcript changing. */
+export function listingPerStore(
+  list: (dirs: readonly string[]) => Promise<SessionActivity[]> = listActivityForDirs,
+): (dirs: readonly string[]) => Promise<SessionActivity[]> {
+  const listings = new Map<string, Promise<SessionActivity[]>>();
+  return (dirs) => {
+    const key = dirs.join("\0");
+    let listing = listings.get(key);
+    if (listing === undefined) {
+      listing = list(dirs);
+      listings.set(key, listing);
+    }
+    return listing;
+  };
+}
+
 export interface AnsweredRecords {
   /** One entry per requested path, known or not — the shape `/api/activity` has always returned. */
   data: Record<string, SessionActivity[]>;

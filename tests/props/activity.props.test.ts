@@ -11,6 +11,7 @@ import { describe, expect, test } from "bun:test";
 import fc from "fast-check";
 import {
   answerRecords,
+  listingPerStore,
   isWorking,
   readActivity,
   WORKING_SILENCE_MS,
@@ -325,5 +326,36 @@ describe("the activity tail and the train never state two different hours", () =
     expect(readCache(whole)).not.toBeNull();
     // A row with no bar, never a guessed hour and never a number the rail disagrees with.
     expect(readCache(tail)).toBeNull();
+  });
+});
+
+// `/api/activity` lists each store once per request, however many records ask for it (2026-10-28:
+// ~300 records sharing one core store made every poll cost ~1 s of CPU).
+describe("activity: one listing per store per request", () => {
+  test("each distinct set of dirs is listed exactly once, and every caller gets that listing", async () => {
+    const dir = fc.constantFrom("/core", "/core-agy", "/own-a", "/own-b", "/own-c");
+    await fc.assert(
+      fc.asyncProperty(fc.array(fc.array(dir, { minLength: 1, maxLength: 3 }), { maxLength: 40 }), async (asks) => {
+        const calls: string[] = [];
+        const fake = async (dirs: readonly string[]): Promise<SessionActivity[]> => {
+          calls.push(dirs.join("|"));
+          return [{ id: dirs.join("|") } as unknown as SessionActivity];
+        };
+        const listOnce = listingPerStore(fake);
+        const answers = await Promise.all(asks.map((dirs) => listOnce(dirs)));
+        const distinct = new Set(asks.map((dirs) => dirs.join("|")));
+        expect(calls.length).toBe(distinct.size);
+        expect(new Set(calls)).toEqual(distinct);
+        asks.forEach((dirs, i) => expect(answers[i]![0]!.id).toBe(dirs.join("|")));
+      }),
+    );
+  });
+
+  test("a new request lists again: nothing is kept between requests", async () => {
+    let calls = 0;
+    const fake = async (): Promise<SessionActivity[]> => (calls++, []);
+    await listingPerStore(fake)(["/core"]);
+    await listingPerStore(fake)(["/core"]);
+    expect(calls).toBe(2);
   });
 });

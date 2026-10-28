@@ -54,7 +54,7 @@ import {
   type TaskStatus,
 } from "./tasks.ts";
 import { setProjectStatus, setVerdict, PROJECT_STATUSES, type ProjectStatus } from "./lifecycle.ts";
-import { answerRecords, activityOf, listActivityForDirs, type SessionActivity } from "./activity.ts";
+import { answerRecords, activityOf, listingPerStore, type SessionActivity } from "./activity.ts";
 import { findIntroduction, listPrototypes } from "./protos.ts";
 import { readBarReading } from "./bar.ts";
 import { readCurrentBudgets } from "./budgets.ts";
@@ -704,9 +704,11 @@ async function activityAnswer(req: Request, rawKeys: string, askedRecords: reado
   // into the `answered` field, so a record this loop never touched (a filter bug, SPEC 217's shape)
   // cannot end up silently claimed as answered either.
   const resolved = new Map<string, SessionActivity[]>();
+  // One listing per store for this request; see `listingPerStore`.
+  const listOnce = listingPerStore();
   await Promise.all([
     ...keys.map(async (key) => {
-      out[key] = await listActivityForDirs([join(ROOT, key), join(AGY_ROOT, key)]);
+      out[key] = await listOnce([join(ROOT, key), join(AGY_ROOT, key)]);
     }),
     ...wanted
       .filter((record) => paths.has(record))
@@ -715,14 +717,14 @@ async function activityAnswer(req: Request, rawKeys: string, askedRecords: reado
         const ownAgy = join(AGY_ROOT, storeKeyOf(dirname(record)));
         const coreClaude = join(ROOT, storeKeyOf(cwdFor(record)));
         const coreAgy = join(AGY_ROOT, storeKeyOf(cwdFor(record)));
-        const own = await listActivityForDirs([ownClaude, ownAgy]);
+        const own = await listOnce([ownClaude, ownAgy]);
         if (ownClaude === coreClaude && ownAgy === coreAgy) {
           resolved.set(record, own);
           return;
         }
         // The link is what makes a session in the shared core store this record's.
         const ids = new Set(sessionsOf(record, links));
-        const core = await listActivityForDirs([coreClaude, coreAgy]);
+        const core = await listOnce([coreClaude, coreAgy]);
         resolved.set(record, mergeByLink(own, core, ids));
       }),
   ]);
