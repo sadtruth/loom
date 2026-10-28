@@ -12,6 +12,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: 1.4.3
       - run: bun install
       - run: bun x tsc --noEmit
       - run: bun test tests/props
@@ -33,6 +35,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
       - uses: actions/setup-node@v4
         with:
           node-version: 20
