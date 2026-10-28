@@ -3820,10 +3820,8 @@ async function sendMessage(): Promise<void> {
         ...(state.activeRecord !== null ? { record: state.activeRecord } : { project: state.projectKey }),
         ...(startingNew ? {} : { session: state.sessionId }),
         text,
-        mode: ui.modeCards.checked ? "cards" : "auto",
         model: ui.pickModel.value,
         effort: ui.pickEffort.value,
-        browser: ui.useBrowser.checked,
         images: state.attachments,
       }),
     });
@@ -5248,21 +5246,6 @@ ui.composer.addEventListener("submit", (event) => {
   void sendMessage();
 });
 
-// The mode survives reloads per device; auto is the default (SPEC 42).
-ui.modeCards.checked = localStorage.getItem("loom-mode") === "cards";
-ui.modeCards.addEventListener("change", () => {
-  localStorage.setItem("loom-mode", ui.modeCards.checked ? "cards" : "auto");
-});
-
-// The browser switch persists the same way, and OFF is what a device that never touched it gets:
-// only an explicit "browser" in storage turns MCP back on. Flipping it re-fingerprints the child,
-// so the next turn spawns a fresh one — that costs one re-written prefix, which is the same thing
-// a flap costs, once, on purpose.
-ui.useBrowser.checked = localStorage.getItem("loom-browser") === "on";
-ui.useBrowser.addEventListener("change", () => {
-  localStorage.setItem("loom-browser", ui.useBrowser.checked ? "on" : "off");
-});
-
 // Model and thinking level persist per device, as default for sessions with no pick yet (SPEC google-pro-models).
 function restorePick(pick: HTMLSelectElement, key: string): void {
   const stored = localStorage.getItem(key);
@@ -5286,7 +5269,7 @@ function restorePick(pick: HTMLSelectElement, key: string): void {
       cur.pick = {
         model: ui.pickModel.value,
         effort: ui.pickEffort.value,
-        mode: ui.modeCards.checked ? "cards" : "auto",
+        mode: "auto",
         at: Date.now(),
       };
     }

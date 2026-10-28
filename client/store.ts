@@ -216,8 +216,6 @@ export const ui = {
   composerNew: need<HTMLButtonElement>("composer-new"),
   opens: need<HTMLElement>("opens"),
   recordBody: need<HTMLElement>("record-body"),
-  modeCards: need<HTMLInputElement>("mode-cards"),
-  useBrowser: need<HTMLInputElement>("use-browser"),
   pickModel: need<HTMLSelectElement>("pick-model"),
   pickEffort: need<HTMLSelectElement>("pick-effort"),
 };

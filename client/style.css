@@ -2382,20 +2382,6 @@ button.seam-open:hover { background: var(--bg-sunken); color: var(--ink); }
   font-family: var(--sans);
 }
 
-/* ── composer mode toggle ───────────────────────────────────────────── */
-#composer-mode {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 12px;
-  color: var(--ink-faint);
-  cursor: pointer;
-  user-select: none;
-  padding-bottom: 10px;
-}
-#composer-mode input { accent-color: var(--warn); }
-#composer-mode:has(input:checked) { color: var(--warn); }
-
 /* ── model + thinking-level pickers (SPEC 49) ───────────────────────── */
 /* Quiet by default and only coloured once they leave "default", so the composer doesn't grow two
    loud controls for a choice most turns never make. */
@@ -2408,14 +2394,6 @@ button.seam-open:hover { background: var(--bg-sunken); color: var(--ink); }
 }
 .model-pick-group .composer-pick {
   margin-bottom: 0;
-}
-.session-model-mark {
-  font-size: 10px;
-  font-family: var(--mono);
-  color: var(--ink-faint);
-  letter-spacing: 0.02em;
-  white-space: nowrap;
-  user-select: none;
 }
 .composer-pick {
   margin-bottom: 10px;

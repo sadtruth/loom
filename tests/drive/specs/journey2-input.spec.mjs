@@ -82,22 +82,6 @@ test("input: send a message, get the reply through the read path, answer a permi
     timeout: 15_000,
   });
 
-  // ── the browser switch: the checkbox still travels, and the browsers are on either way ──
-  // It used to be two-sided — `mcp=off` until the box was ticked. Since 2026-09-01 the Playwright
-  // servers are always on and `req.browser` reaches neither `childArgs` nor the fingerprint
-  // (input.ts, and the unit test that pins it), so the only client-side claim left to make is that
-  // the checkbox reaches the POST. `mcp=on` here says what it says everywhere else in this spec:
-  // the child was handed an MCP config.
-  const browserSend = page.waitForRequest((r) => r.url().includes("/api/input") && r.method() === "POST");
-  await page.locator("#use-browser").check();
-  await composer.fill("with a browser");
-  await composer.press("Enter");
-  expect((await browserSend).postDataJSON().browser, "the checkbox reaches the POST").toBe(true);
-  await expect(page.locator("#transcript-body")).toContainText("[model=haiku effort=xhigh mcp=on]", {
-    timeout: 15_000,
-  });
-  await page.locator("#use-browser").uncheck();
-
   // Back to default: the flags must DISAPPEAR from the spawn, not linger from the last turn.
   await page.locator("#pick-model").selectOption("default");
   await page.locator("#pick-effort").selectOption("default");
@@ -183,12 +167,19 @@ test("input: send a message, get the reply through the read path, answer a permi
     timeout: 20_000,
   });
 
-  // ── the permit loop, in cards mode via the toggle ─────────────────
-  await page.locator("#mode-cards").check();
+  // ── the permit loop, in cards mode ─────────────────────────────────
+  // The "ask first" checkbox is gone (2026-10-28: it went unused), but the server still takes
+  // `mode: "cards"` and drawing the permit card is still the client's job, so the pin puts the mode
+  // on the wire itself instead of ticking a box.
+  const askFirst = async (route) => {
+    const body = route.request().postDataJSON();
+    await route.continue({ postData: JSON.stringify({ ...body, mode: "cards" }) });
+  };
+  await page.route("**/api/input", askFirst);
   const cardsSend = page.waitForRequest((r) => r.url().includes("/api/input") && r.method() === "POST");
   await composer.fill("please ask permission before writing");
   await composer.press("Enter");
-  expect((await cardsSend).postDataJSON().mode).toBe("cards");
+  await cardsSend;
   const card = page.locator(".permit");
   await expect(card).toBeVisible({ timeout: 15_000 });
   await expect(card).toContainText("Write");
@@ -275,7 +266,7 @@ test("input: send a message, get the reply through the read path, answer a permi
   await expect(page.locator(".permit")).toBeVisible({ timeout: 15_000 });
   await page.locator(".permit-btn.deny").click();
   await expect(page.locator("#transcript-body")).toContainText("stub verdict: deny", { timeout: 15_000 });
-  await page.locator("#mode-cards").uncheck();
+  await page.unroute("**/api/input", askFirst);
 
   // ── attach an image: thumbnail strip, then the stub sees it ───────
   const PNG_1X1 = Buffer.from(

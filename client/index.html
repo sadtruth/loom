@@ -90,7 +90,6 @@
             <button id="composer-attach" type="button" title="Attach an image">📎</button>
             <div class="model-pick-group">
               <select id="pick-model" class="composer-pick" aria-label="Model" title="Which model answers this turn. default = whatever the CLI would pick on its own."></select>
-              <span class="session-model-mark" title="This model belongs to this session">this session</span>
             </div>
             <select id="pick-effort" class="composer-pick" aria-label="Thinking level" title="How hard it thinks before acting. default = the CLI's own level.">
               <option value="default">think: default</option>
@@ -100,14 +99,6 @@
               <option value="xhigh">xhigh</option>
               <option value="max">max</option>
             </select>
-            <label id="composer-mode" title="checked: every file write and command shows you an Allow/Deny card first · unchecked: the auto classifier decides silently, like your normal sessions">
-              <input id="mode-cards" type="checkbox" />
-              <span>ask first</span>
-            </label>
-            <label id="composer-browser" title="checked: this session's child loads the Playwright MCP browsers · unchecked (default): it ignores .mcp.json entirely. The servers connecting and dropping changes the tool list, which invalidates the prompt cache and re-sends the whole conversation as a write — one flap cost 141,405 tokens on 2026-08-07.">
-              <input id="use-browser" type="checkbox" />
-              <span>browser</span>
-            </label>
             <!-- What typing here costs, and the way to stop paying it (SPEC §Train): the button
                  opens a seam and starts a fresh session in the same train. The MARK that reports the
                  accounting left for the column's foot with the block meter (SPEC 186). -->
