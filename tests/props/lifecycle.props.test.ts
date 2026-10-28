@@ -83,9 +83,39 @@ describe("setVerdict over a real record", () => {
     );
   });
 
-  test("a record with no `Where it stands` section is refused", () => {
-    const bare = "---\ntype: project\nstatus: active\n---\n\n# X\n\n## Next\n\n1. [ ] **Do it** — soon.\n";
-    expect(() => setVerdict(bare, "done and dusted", "2026-08-06")).toThrow(/Where it stands/);
+  // Older records have no `Where it stands` (they say STATE, Status, Ground truth), and refusing them
+  // left them impossible to close (2026-10-28). The section is made, above the first `##` section.
+  test("a record with no `Where it stands` section gains one above its first section", () => {
+    const old = "---\ntype: project\nstatus: active\n---\n\n# X\n\nIntro line.\n## STATE\n\nold notes\n";
+    const out = setVerdict(old, "done and dusted", "2026-10-28");
+    expect(out).toBe(
+      "---\ntype: project\nstatus: active\n---\n\n# X\n\nIntro line.\n\n## Where it stands\n\n" +
+        "**Verdict — 2026-10-28.** done and dusted\n\n## STATE\n\nold notes\n",
+    );
+    // Closing again replaces the verdict in the section it just made, rather than adding a second one.
+    const again = setVerdict(out, "reopened and closed", "2026-10-29");
+    expect(again.match(/^## Where it stands$/gm)?.length).toBe(1);
+    expect(again).toContain("**Verdict — 2026-10-29.** reopened and closed\n\n## STATE");
+    expect(again).not.toContain("done and dusted");
+  });
+
+  test("a record with no `##` section at all gets the section at its end", () => {
+    const bare = "---\ntype: project\nstatus: active\n---\n\n# X\n\nJust notes.\n\n\n";
+    expect(setVerdict(bare, "done", "2026-10-28")).toBe(
+      "---\ntype: project\nstatus: active\n---\n\n# X\n\nJust notes.\n\n## Where it stands\n\n**Verdict — 2026-10-28.** done\n",
+    );
+  });
+
+  test("the new section never lands inside the frontmatter, whatever the record holds", () => {
+    fc.assert(
+      fc.property(fc.array(fc.constantFrom("## A", "# T", "text", "", "## B", "- item"), { maxLength: 12 }), (body) => {
+        const text = ["---", "type: project", "status: active", "---", ...body].join("\n");
+        const out = setVerdict(text, "v", "2026-10-28").split("\n");
+        expect(out.slice(0, 4)).toEqual(["---", "type: project", "status: active", "---"]);
+        expect(out.filter((l) => l === "## Where it stands").length).toBe(1);
+        expect(out).toContain("**Verdict — 2026-10-28.** v");
+      }),
+    );
   });
 
   test("a multi-line verdict is written as ONE line", () => {

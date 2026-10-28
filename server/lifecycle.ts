@@ -59,14 +59,25 @@ export function setProjectStatus(text: string, status: ProjectStatus): string {
  * Write the verdict into `## Where it stands`, replacing the one already there.
  *
  * Replacing rather than appending is what makes a second close idempotent — the same rule a task's
- * `result:` follows. A record with no such section is refused: loom does not invent sections in
- * User's vault, and the section is one the skill's linter requires anyway.
+ * `result:` follows. A record with no such section - older records called it `STATE`, `Status`
+ * or `Ground truth`, about one in twenty on 2026-10-28 - gets a new one just above its first `##`
+ * section, so it can be closed at all. It used to be refused, which left those projects open forever.
  */
 export function setVerdict(text: string, verdict: string, date: string): string {
   const lines = text.split("\n");
   const heading = lines.findIndex((line) => STANDS_HEADING.test(line));
+  const body = `**Verdict — ${date}.** ${oneLine(verdict)}`;
   if (heading < 0) {
-    throw new Error("this record has no `Where it stands` section — the verdict has nowhere to go");
+    const section = ["## Where it stands", "", body, ""];
+    const start = Math.max(frontmatterEnd(lines) + 1, 0);
+    const first = lines.findIndex((line, i) => i >= start && /^##\s/.test(line));
+    if (first >= 0) {
+      const gap = first > 0 && (lines[first - 1] ?? "").trim().length > 0 ? [""] : [];
+      return [...lines.slice(0, first), ...gap, ...section, ...lines.slice(first)].join("\n");
+    }
+    let end = lines.length;
+    while (end > start && (lines[end - 1] ?? "").trim().length === 0) end -= 1;
+    return [...lines.slice(0, end), "", ...section].join("\n");
   }
 
   let end = lines.length;
@@ -76,8 +87,6 @@ export function setVerdict(text: string, verdict: string, date: string): string 
       break;
     }
   }
-
-  const body = `**Verdict — ${date}.** ${oneLine(verdict)}`;
 
   for (let i = heading + 1; i < end; i += 1) {
     if (!VERDICT_LEAD.test(lines[i] ?? "")) continue;
