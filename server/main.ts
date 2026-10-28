@@ -1173,8 +1173,8 @@ const server = Bun.serve<SocketData, Routes>({
       },
     },
 
-    // The same gate one level up (SPEC 65): a project closes on a VERDICT, never on a finished task
-    // list. The gate lives here rather than in the client, so it holds for any caller.
+    // A project's own status (SPEC 65). `done` no longer needs a verdict (2026-10-28: none was ever
+    // written); one that is given is still written into `Where it stands`.
     "/api/record/status": {
       POST: async (req) => {
         const denied = requireAuth(req);
@@ -1193,9 +1193,6 @@ const server = Bun.serve<SocketData, Routes>({
           return json({ error: `status must be one of ${PROJECT_STATUSES.join(", ")}` }, 400);
         }
         const verdict = typeof body.verdict === "string" ? body.verdict.trim() : "";
-        if (status === "done" && verdict.length === 0) {
-          return json({ error: "done needs a verdict — which parts landed, and which did not" }, 400);
-        }
         // The status the reader saw, echoed back like a task's line: a close cannot land on a record
         // another session moved in the meantime.
         if (typeof body.expect === "string" && body.expect !== record.status) {

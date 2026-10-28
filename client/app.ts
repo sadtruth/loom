@@ -2244,7 +2244,7 @@ function openTreeMenu(x: number, y: number, record: RecordInfo, depth: number): 
   openContextMenu(x, y, [
     { label: "+ subproject", act: () => openCreateInput(record.path, depth + 1) },
     { label: "rename", act: () => openRenameInput(record, depth) },
-    ...(record.status === "done" ? [] : [{ label: "mark done", act: () => openDoneInput(record, depth) }]),
+    ...(record.status === "done" ? [] : [{ label: "mark done", act: () => void writeRecordStatus(record.path, record.status, "done") }]),
     { label: "---", act: () => {} },
     { label: "copy link", act: () => copyRecordLink(record.path) },
   ]);
@@ -2265,8 +2265,8 @@ function openTreeMenu(x: number, y: number, record: RecordInfo, depth: number): 
  * the other session just created appears in the same frame.
  */
 interface TreeInput {
-  kind: "create" | "rename" | "done";
-  /** create: the parent record, null for a root. rename: the record being renamed. done: the record being closed. */
+  kind: "create" | "rename";
+  /** create: the parent record, null for a root. rename: the record being renamed. */
   record: string | null;
   /** rename: the title held when the input opened — the `expect` the save is checked against. */
   initial: string;
@@ -2297,7 +2297,6 @@ function titleInput(state: TreeInput): HTMLDivElement {
   const input = document.createElement("input");
   input.type = "text";
   if (state.kind === "create") input.placeholder = state.record === null ? "new project title" : "subproject title";
-  if (state.kind === "done") input.placeholder = "verdict - what landed, what did not";
   input.value = state.value;
   holder.append(input);
 
@@ -2309,9 +2308,8 @@ function titleInput(state: TreeInput): HTMLDivElement {
     if (settled) return;
     const title = value?.trim() ?? "";
     closeTreeInput();
-    if (title.length === 0 || (state.kind !== "done" && title === state.initial)) drawTree();
+    if (title.length === 0 || title === state.initial) drawTree();
     else if (state.kind === "create") void submitCreate(title, state.record);
-    else if (state.kind === "done") { if (state.record !== null) void writeRecordStatus(state.record, state.initial, "done", title); }
     else if (state.record !== null) void submitRename(state.record, title, state.initial);
   };
   const track = (): void => {
@@ -2349,17 +2347,6 @@ function openRenameInput(record: RecordInfo, depth: number): void {
     // Opened selected, so the first keystroke replaces the old title — the ordinary rename gesture.
     sel: [0, record.title.length],
   };
-  drawTree();
-}
-
-/**
- * "mark done" from a row's menu (asked 2026-09-28). Done needs a one-line verdict (SPEC 65), so the
- * menu opens a verdict line under the row instead of closing the project blind. `initial` carries
- * the status the scan showed: the `expect` the server checks the write against.
- */
-function openDoneInput(record: RecordInfo, depth: number): void {
-  closeTreeInput();
-  treeInput = { kind: "done", record: record.path, initial: record.status, depth: depth + 1, value: "", sel: [0, 0] };
   drawTree();
 }
 
@@ -3209,7 +3196,7 @@ async function showRecord(path: string): Promise<void> {
     facts.append(
       renderLifecycle({
         status: record.status,
-        onDone: (verdict) => void writeRecordStatus(path, record.status, "done", verdict),
+        onDone: () => void writeRecordStatus(path, record.status, "done"),
         onReopen: () => void writeRecordStatus(path, record.status, "active"),
       }),
     );

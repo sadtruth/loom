@@ -2030,43 +2030,6 @@ button.seam-open:hover { background: var(--bg-sunken); color: var(--ink); }
   cursor: pointer;
 }
 .record-act:hover { color: var(--ink); border-color: var(--ink-faint); }
-/* No cap either (SPEC 193). A field that stops short of the list it writes into is a ragged edge in
-   the middle of the record, and the reason 183 exempted forms — "a form is not prose" — argues for
-   a MEASURE, which the centre column no longer has anywhere. */
-.record-form {
-  flex: 0 0 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 4px;
-}
-.record-form-label { font-size: 12px; color: var(--ink-dim); }
-.record-form-text {
-  font: inherit;
-  font-size: 13px;
-  color: var(--ink);
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 8px 10px;
-  resize: vertical;
-}
-.record-form-text.bad { border-color: var(--error); }
-.record-form-actions { display: flex; gap: 8px; }
-.record-save,
-.record-cancel {
-  font: inherit;
-  font-size: 12px;
-  padding: 4px 12px;
-  border-radius: var(--radius);
-  border: 1px solid var(--line);
-  background: none;
-  color: var(--ink-dim);
-  cursor: pointer;
-}
-.record-save { color: var(--ink); border-color: var(--ink-faint); }
-.record-save:hover { border-color: var(--user); color: var(--user); }
-.record-cancel:hover { color: var(--ink); }
 .record-up {
   background: none;
   border: 1px solid var(--line);
