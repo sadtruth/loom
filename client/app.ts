@@ -3820,6 +3820,7 @@ async function sendMessage(): Promise<void> {
         ...(state.activeRecord !== null ? { record: state.activeRecord } : { project: state.projectKey }),
         ...(startingNew ? {} : { session: state.sessionId }),
         text,
+        mode: "auto", // cards mode has no switch in the composer any more (SPEC 42)
         model: ui.pickModel.value,
         effort: ui.pickEffort.value,
         images: state.attachments,
