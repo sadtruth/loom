@@ -21,7 +21,6 @@ import { embedPage } from "./embed.ts";
 interface FileResponse {
   path: string;
   kind: "markdown" | "text" | "dir" | "page" | "pdf" | "download";
-  truncated?: boolean;
   bytes: number;
   text: string;
   sha?: string;
@@ -299,18 +298,6 @@ export async function showFile(
     return;
   }
 
-  let container: HTMLElement | null = null;
-  if (file.truncated) {
-    container = document.createElement("div");
-    const truncNote = note("");
-    truncNote.textContent = `showing the first 2 MB of ${readableBytes(file.bytes)} — `;
-    const rawLink = document.createElement("a");
-    rawLink.href = `/api/file?${currentQuery}&raw=1`;
-    rawLink.target = "_blank";
-    rawLink.textContent = "open raw";
-    truncNote.append(rawLink);
-    container.append(truncNote);
-  }
 
   if (file.kind === "markdown") {
     const article = document.createElement("article");
@@ -356,11 +343,8 @@ export async function showFile(
          form.append(saveControls, editor);
 
          const reset = () => {
-           if (container) {
-             container.replaceChildren(article);
-           } else {
-             show(handles, article);
-           }
+           show(handles, article);
+           
          };
 
          const save = async () => {
@@ -389,11 +373,8 @@ export async function showFile(
            }
          });
 
-         if (container) {
-            container.replaceChildren(form);
-         } else {
-            show(handles, form);
-         }
+         show(handles, form);
+         
          editor.focus();
       });
 
@@ -485,24 +466,16 @@ export async function showFile(
       });
     }
 
-    if (container) {
-      container.append(article);
-      show(handles, container);
-    } else {
-      show(handles, article);
-    }
+    show(handles, article);
+    
 
     if (place !== undefined) landOn(handles, article, place);
     return;
   }
 
   const cv = codeView(shown, file.text);
-  if (container) {
-    container.append(cv);
-    show(handles, container);
-  } else {
-    show(handles, cv);
-  }
+  show(handles, cv);
+  
 
   if (place !== undefined) landOn(handles, handles.body, place);
 }

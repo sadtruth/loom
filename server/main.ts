@@ -20,7 +20,7 @@ import { aggregate, type Message, type Touch } from "./transcript.ts";
 import { readPins, setPin, type PinMap } from "./pins.ts";
 import { addAccept, readAccepts, type Accept } from "./accepts.ts";
 import { openPath } from "./open.ts";
-import { MAX_BYTES, truncateUtf8, guardFrom, kindOf, listDir, locate, looksBinary, resolveWiki, wikiScope, contentDisposition, writableFile } from "./files.ts";
+import { guardFrom, kindOf, listDir, locate, looksBinary, resolveWiki, wikiScope, contentDisposition, writableFile } from "./files.ts";
 import { stat } from "node:fs/promises";
 import { existsSync, readdirSync, readFileSync, type Stats } from "node:fs";
 import { heapStats } from "bun:jsc";
@@ -1582,18 +1582,13 @@ const server = Bun.serve<SocketData, Routes>({
 
       if (kind === "image") return new Response(file);
 
-      // JSON path reads max 10MB into memory. But it ALWAYS returns something.
-      // If > 10MB it still truncates to 2MB, same as between 2MB and 10MB.
-      // So actually, if >10MB we don't reject. We just read 2MB anyway.
-
-      const truncated = file.size > MAX_BYTES;
-      const sliceSize = truncated ? MAX_BYTES + 4 : file.size;
-      const rawBytes = new Uint8Array(await file.slice(0, sliceSize).arrayBuffer());
-      const bytes = truncated ? truncateUtf8(rawBytes, MAX_BYTES) : rawBytes;
-
-      if (looksBinary(bytes)) {
-        kind = "download";
-      }
+      // The whole file, whatever its size (2026-11-02: no size cap, by request). Binary is sniffed
+      // from the head (looksBinary reads 1 KB) so a big video never lands in memory; it is a
+      // download link either way.
+      const head = new Uint8Array(await file.slice(0, 8192).arrayBuffer());
+      if (looksBinary(head)) kind = "download";
+      const rawBytes = kind === "download" ? head : new Uint8Array(await file.arrayBuffer());
+      const bytes = rawBytes;
 
       // The server re-hashes the file on disk and answers 409 with the current content if they differ.
       const text = kind === "download" ? "" : new TextDecoder().decode(bytes);
@@ -1610,7 +1605,6 @@ const server = Bun.serve<SocketData, Routes>({
         text,
         sha,
         writable: isWritable.ok,
-        truncated: truncated && kind !== "download" ? true : undefined
       });
     },
 

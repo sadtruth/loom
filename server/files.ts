@@ -40,9 +40,6 @@ export interface Guard {
 export const DENY_SEGMENT = new Set([".ssh", ".gnupg", ".aws", ".password-store", "node_modules", ".git"]);
 export const DENY_NAME = /^(\.env(\..*)?|id_(rsa|ed25519|ecdsa)(\.pub)?|.*\.(pem|key|p12|kdbx))$/i;
 
-/** 2 MB. A transcript pane is for reading, and anything larger is a download, not a read. */
-export const MAX_BYTES = 2 * 1024 * 1024;
-export const MAX_READ_BYTES = 10 * 1024 * 1024;
 
 export type Decision =
   | { ok: true; path: string }
@@ -450,29 +447,6 @@ export function looksBinary(bytes: Uint8Array): boolean {
   const limit = Math.min(bytes.length, 1024);
   for (let i = 0; i < limit; i += 1) if (bytes[i] === 0) return true;
   return false;
-}
-
-/**
- * Truncates a byte array at a given max length, taking care not to split a UTF-8 character.
- */
-export function truncateUtf8(bytes: Uint8Array, max: number): Uint8Array {
-  if (bytes.length <= max) return bytes;
-  let i = max - 1;
-  while (i >= 0 && (bytes[i]! & 0xC0) === 0x80) {
-    i -= 1;
-  }
-  if (i < 0) return bytes.slice(0, 0);
-
-  let seqLen = 1;
-  const b = bytes[i]!;
-  if ((b & 0xE0) === 0xC0) seqLen = 2;
-  else if ((b & 0xF0) === 0xE0) seqLen = 3;
-  else if ((b & 0xF8) === 0xF0) seqLen = 4;
-
-  if (max - i < seqLen) {
-    return bytes.slice(0, i);
-  }
-  return bytes.slice(0, max);
 }
 
 /**
