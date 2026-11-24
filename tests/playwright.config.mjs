@@ -207,18 +207,25 @@ function commandCodeStub() {
   };
 }
 
+// Stub FILES, unlike the state the server makes for itself, must exist before it boots and must
+// outlive the run's artifact cleanup. `outputDir` is Playwright's to wipe: it removes
+// `test-results-w0` when the run starts, which is the runner's outputDir, so a seed written there
+// was gone before the first poll (CI run 45371785461, journey14: "stub ... did not parse"). They
+// live in a sibling `stubs-w<i>` that Playwright never touches.
 if (!isWorker) {
   for (let i = 0; i < WORKERS; i += 1) {
     const dir = join(OUT, slotFor("test-results", i));
+    const stubDir = join(OUT, slotFor("stubs", i));
     mkdirSync(dir, { recursive: true });
+    mkdirSync(stubDir, { recursive: true });
     try {
       unlinkSync(join(dir, "stub-hold"));
     } catch {
       /* not there is the normal case */
     }
-    writeFileSync(join(dir, "quota-commandcode.json"), JSON.stringify(commandCodeStub()));
+    writeFileSync(join(stubDir, "quota-commandcode.json"), JSON.stringify(commandCodeStub()));
     writeFileSync(
-      join(dir, "quota.json"),
+      join(stubDir, "quota.json"),
       JSON.stringify({
         limits: [
           {
@@ -266,10 +273,11 @@ process.env["LOOM_BAR_ARCHIVE"] = join(ROOT, "tests", "fixture", slot("transcrip
 // pin would assert against whatever User's account happens to read this afternoon — and would
 // fail with no network at all. The spec REWRITES this file to drive the severity and stale states,
 // which is why the poll gap is dropped to 300ms alongside it (usage-bar, 2026-08-26).
-process.env["LOOM_QUOTA_STUB"] = join(OUT, slot("test-results"), "quota.json");
+// In `stubs`, not `test-results`: the outputDir is wiped by Playwright (see the note above).
+process.env["LOOM_QUOTA_STUB"] = join(OUT, slot("stubs"), "quota.json");
 // The Command Code budget's stub path. It is seeded per worker in the block above, for the same
 // reason the Anthropic one is.
-process.env["LOOM_QUOTA_STUB_COMMANDCODE"] = join(OUT, slot("test-results"), "quota-commandcode.json");
+process.env["LOOM_QUOTA_STUB_COMMANDCODE"] = join(OUT, slot("stubs"), "quota-commandcode.json");
 // The stub must exist BEFORE the server boots — `readQuota` only ever reports what this file
 // holds, so a first paint racing an empty/missing stub shows nothing and the spec has to wait it
 // out. Seeded NOW-relative: a `session` window at 23%/normal resetting ~4h out, a `weekly_all`
@@ -375,11 +383,11 @@ export default defineConfig({
       LOOM_BAR_ARCHIVE: join(ROOT, "tests", "fixture", slotFor("transcripts", i)),
       // See the note beside LOOM_QUOTA_STUB above: a stubbed quota, repolled fast enough that a
       // spec can step through severities without waiting a real minute per step.
-      LOOM_QUOTA_STUB: join(OUT, slotFor("test-results", i), "quota.json"),
+      LOOM_QUOTA_STUB: join(OUT, slotFor("stubs", i), "quota.json"),
       // The badge's other budget since 2026-11-24, and the one that draws unless a spec says
       // otherwise. Slotted so two workers cannot drive each other's windows, and seeded with the
       // same shape the runner-level stub above writes.
-      LOOM_QUOTA_STUB_COMMANDCODE: join(OUT, slotFor("test-results", i), "quota-commandcode.json"),
+      LOOM_QUOTA_STUB_COMMANDCODE: join(OUT, slotFor("stubs", i), "quota-commandcode.json"),
       LOOM_QUOTA_POLL_MS: "300",
       // The pane's readable root under test is loom itself: the fixture points a chip at
       // ARCHITECTURE.md, and everything outside must come back 403 from the same guard.
