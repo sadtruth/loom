@@ -395,6 +395,11 @@ export default defineConfig({
       // The input spec drives the write path against a stub binary — hermetic, free, and faithful
       // to the spike-pinned contract of the real one (DECISIONS.md 2026-08-05).
       LOOM_CLAUDE_BIN: join(ROOT, "tests", "stub-claude.ts"),
+      // The recap agent spawns its OWN binary (`server/main.ts`, RECAP_BIN). Its default became
+      // agy.sh on 2026-11-22, and the fixture vault has no agy.sh, so every recap attempt in the
+      // pins died with ENOENT and journey21-recap timed out — 5 of 5 attempts on the runs of
+      // 2026-11-24, none on the baselines. Baseline wiring used the stub, and so does this.
+      LOOM_RECAP_BIN: join(ROOT, "tests", "stub-claude.ts"),
       LOOM_PERMIT_TIMEOUT_MS: "30000",
       LOOM_TOKEN: "loom-test-token",
       // The file a spec touches to release a held stub turn (loom item 58). Slotted with everything
