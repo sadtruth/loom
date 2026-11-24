@@ -286,10 +286,12 @@ describe("Budgets Aggregator properties and fault isolation", () => {
     expect(Object.keys(report.budgets).length).toBe(BUDGET_IDS.length);
 
     expect(report.budgets["commandcode"].status).toBe("ok");
+    // The seeded Google stub: Gemini 78% five-hour remaining / 38% weekly remaining, so the
+    // headline is the worse window at 62% used; Claude-and-GPT 100% / 74% remaining → 26%.
     expect(report.budgets["g1:gemini"].status).toBe("ok");
-    expect(report.budgets["g1:gemini"].percent).toBe(30);
+    expect(report.budgets["g1:gemini"].percent).toBe(62);
     expect(report.budgets["g1:thirdparty"].status).toBe("ok");
-    expect(report.budgets["g1:thirdparty"].percent).toBe(20);
+    expect(report.budgets["g1:thirdparty"].percent).toBe(26);
   });
 
   test("a stale reading is always marked stale, for any age", async () => {
