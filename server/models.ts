@@ -51,6 +51,9 @@ export interface ModelSpec {
 }
 
 const GEMINI = [
+  "4-hydrogen-high",
+  "4-hydrogen-medium",
+  "4-hydrogen-low",
   "3.8-flash-high",
   "3.7-flash-medium",
   "3.7-flash-low",
@@ -145,16 +148,17 @@ export function runnerOf(id: string): RunnerKind {
 }
 
 /**
- * The budgets the limits bar draws: Anthropic's own window, the two pools on the Google account,
- * and Jules' daily task count. Ids are stable — the client keys its meters off them.
+ * The budgets the limits bar draws: the Command Code subscription (three windows) and the two
+ * pools on the Google account. Anthropic's window and Jules' task count left on 2026-11-24.
+ * Ids are stable — the client keys its meters off them.
  */
-export const BUDGET_IDS = ["anthropic", "g1:gemini", "g1:thirdparty", "jules"] as const;
+export const BUDGET_IDS = ["commandcode", "g1:gemini", "g1:thirdparty"] as const;
 
 export type BudgetId = (typeof BUDGET_IDS)[number];
 
 /** Which budget a session on this model is spending. */
 export function budgetFor(id: string): BudgetId {
   const spec = specFor(id);
-  if (spec.family === "claude") return "anthropic";
+  if (spec.family === "claude") return "commandcode";
   return `g1:${spec.pool ?? "gemini"}` as BudgetId;
 }

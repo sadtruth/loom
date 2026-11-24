@@ -1197,9 +1197,6 @@ button.seam-open:hover { background: var(--bg-sunken); color: var(--ink); }
 .micro-bar.hot i {
   background: var(--error);
 }
-.micro-bar.jules i {
-  background: var(--user);
-}
 .micro-bar.unavailable {
   opacity: 0.35;
   background: var(--line-soft);

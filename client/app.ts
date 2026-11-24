@@ -3636,7 +3636,7 @@ let barSession: string | null = null;
 
 /**
  * The one foot badge (SPEC §Bar): a severity-coloured dot, the active pool percent, the
- * prompt-cache countdown, the time to reset, and the 6-budget micro-meter strip, resting on one
+ * prompt-cache countdown, the time to reset, and the pool micro-meter strip, resting on one
  * 11px mono line. Everything else is in the detail panel `buildBudgetsTooltip` builds alongside it.
  */
 function drawBadge(): void {

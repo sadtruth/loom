@@ -29,7 +29,7 @@ import {
 
 describe("childSettings", () => {
   test("auto sets defaultMode: auto and keeps the hook", () => {
-    const parsed = JSON.parse(childSettings("auto"));
+    const parsed = JSON.parse(childSettings("auto", undefined, "auto"));
     expect(parsed.permissions).toEqual({ defaultMode: "auto" });
     expect(parsed.hooks.PreToolUse[0].hooks[0].command).toContain("permit.ts");
   });
@@ -38,6 +38,13 @@ describe("childSettings", () => {
     const parsed = JSON.parse(childSettings("cards"));
     expect(parsed.permissions).toBeUndefined();
     expect(parsed.hooks.PreToolUse[0].hooks[0].command).toContain("permit.ts");
+  });
+
+  test("bypassPermissions sets defaultMode: bypassPermissions and childArgs includes --dangerously-skip-permissions", () => {
+    const parsed = JSON.parse(childSettings("auto", undefined, "bypassPermissions"));
+    expect(parsed.permissions).toEqual({ defaultMode: "bypassPermissions" });
+    const args = childArgs("claude", req(), "bypassPermissions");
+    expect(args).toContain("--dangerously-skip-permissions");
   });
 
   // token-cost task 21/22. `.claude/settings.json` is discovered from the CWD and does not walk

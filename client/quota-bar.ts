@@ -149,10 +149,9 @@ export interface TipSection {
 }
 
 export type BudgetId =
-  | "anthropic"
+  | "commandcode"
   | "g1:gemini"
-  | "g1:thirdparty"
-  | "jules";
+  | "g1:thirdparty";
 
 export type BudgetAvailability = "ok" | "stale" | "unavailable";
 
@@ -174,6 +173,8 @@ export interface BudgetEntry {
   at: number | null;
   fiveHour?: BudgetWindowBreakdown | null;
   weekly?: BudgetWindowBreakdown | null;
+  /** Command Code's monthly credit pool; the other pools have no monthly window. */
+  monthly?: BudgetWindowBreakdown | null;
 }
 
 export interface BudgetsReport {
@@ -183,10 +184,9 @@ export interface BudgetsReport {
 }
 
 export const BUDGET_ORDER: readonly BudgetId[] = [
-  "anthropic",
+  "commandcode",
   "g1:gemini",
   "g1:thirdparty",
-  "jules",
 ];
 
 export function clampPct(v: number): number {
@@ -195,14 +195,12 @@ export function clampPct(v: number): number {
 
 export function budgetLabel(id: BudgetId): string {
   switch (id) {
-    case "anthropic":
-      return "Claude (Anthropic)";
+    case "commandcode":
+      return "Command Code";
     case "g1:gemini":
       return "G1 gemini (Flash/Pro)";
     case "g1:thirdparty":
       return "G1 claude (Sonnet/Opus 4.6)";
-    case "jules":
-      return "Jules tasks";
   }
 }
 
@@ -216,13 +214,13 @@ export function currentActiveBudgetId(): BudgetId {
   }
   const spec = state.models.find((m) => m.id === modelId);
   if (spec !== undefined) {
-    if (spec.family === "claude") return "anthropic";
+    if (spec.family === "claude") return "commandcode";
     return `g1:${spec.pool ?? "gemini"}` as BudgetId;
   }
   if (state.activeFamily === "google") {
     return modelId.includes("claude") || modelId.includes("gpt") ? "g1:thirdparty" : "g1:gemini";
   }
-  return "anthropic";
+  return "commandcode";
 }
 
 /**
@@ -314,47 +312,44 @@ export function buildBudgetsTooltip(
       continue;
     }
 
-    if (id === "jules") {
-      const usedStr = entry.absolute
-        ? `${entry.absolute.used} / ${entry.absolute.limit} today (${Math.round(entry.percent ?? 0)}%)`
-        : `${Math.round(entry.percent ?? 0)}%`;
-      const resetStr = entry.resetsAt !== null ? ` · resets ${compactDuration(entry.resetsAt - now)}` : "";
-      poolRows.push({
-        label: budgetLabel(id),
-        value: `${usedStr}${resetStr}`,
-        className: isActive ? "active-pool" : undefined,
-      });
-    } else {
-      // Anthropic and the Google pools draw the same way: a headline row, then the two windows
-      // under it. Anthropic used to skip the windows, so its WEEKLY limit — the one that actually
-      // runs out — appeared nowhere in the panel, though the server has always sent it
-      // (User, 2026-09-02: *"it shows also weekly anthropic limit, you missed it"*).
-      const pct = Math.round(entry.percent ?? 0);
-      const resetStr = entry.resetsAt !== null ? `resets ${compactDuration(entry.resetsAt - now)}` : (pct === 0 ? "unused" : "");
-      poolRows.push({
-        label: id === "anthropic" ? "Claude (Anthropic sub)" : budgetLabel(id),
-        value: resetStr ? `${pct}% · ${resetStr}` : `${pct}%`,
-        className: isActive ? "active-pool" : undefined,
-      });
+    // Every pool draws the same way: a headline row, then its windows under it. Command Code has
+    // three (monthly, 5-hour, weekly); the Google pools have two. Anthropic used to skip its
+    // windows, so its WEEKLY limit — the one that actually runs out — appeared nowhere in the
+    // panel (User, 2026-09-02: *"it shows also weekly anthropic limit, you missed it"*).
+    const pct = Math.round(entry.percent ?? 0);
+    const resetStr = entry.resetsAt !== null ? `resets ${compactDuration(entry.resetsAt - now)}` : (pct === 0 ? "unused" : "");
+    poolRows.push({
+      label: budgetLabel(id),
+      value: resetStr ? `${pct}% · ${resetStr}` : `${pct}%`,
+      className: isActive ? "active-pool" : undefined,
+    });
 
-      if (entry.fiveHour) {
-        const fhPct = Math.round(entry.fiveHour.percent);
-        const fhReset = entry.fiveHour.resetsAt !== null ? `resets ${compactDuration(entry.fiveHour.resetsAt - now)}` : "—";
-        poolRows.push({
-          label: "↳ 5h window",
-          value: `${fhPct}% · ${fhReset}`,
-          className: "sub-row",
-        });
-      }
-      if (entry.weekly) {
-        const wkPct = Math.round(entry.weekly.percent);
-        const wkReset = entry.weekly.resetsAt !== null ? `resets ${clockOfDay(entry.weekly.resetsAt)}` : "—";
-        poolRows.push({
-          label: "↳ weekly",
-          value: `${wkPct}% · ${wkReset}`,
-          className: "sub-row",
-        });
-      }
+    if (entry.monthly) {
+      const moPct = Math.round(entry.monthly.percent);
+      const moReset = entry.monthly.resetsAt !== null ? `resets ${clockOfDay(entry.monthly.resetsAt)}` : "—";
+      poolRows.push({
+        label: "↳ monthly",
+        value: `${moPct}% · ${moReset}`,
+        className: "sub-row",
+      });
+    }
+    if (entry.fiveHour) {
+      const fhPct = Math.round(entry.fiveHour.percent);
+      const fhReset = entry.fiveHour.resetsAt !== null ? `resets ${compactDuration(entry.fiveHour.resetsAt - now)}` : "—";
+      poolRows.push({
+        label: "↳ 5h window",
+        value: `${fhPct}% · ${fhReset}`,
+        className: "sub-row",
+      });
+    }
+    if (entry.weekly) {
+      const wkPct = Math.round(entry.weekly.percent);
+      const wkReset = entry.weekly.resetsAt !== null ? `resets ${clockOfDay(entry.weekly.resetsAt)}` : "—";
+      poolRows.push({
+        label: "↳ weekly",
+        value: `${wkPct}% · ${wkReset}`,
+        className: "sub-row",
+      });
     }
   }
 
@@ -419,10 +414,9 @@ export function drawBarTooltip(model: { note: string | null; rightNote?: string 
 
 export function updateMicroBars(budgets: BudgetsReport, activeId: BudgetId): void {
   const microMap: Record<BudgetId, HTMLElement> = {
-    anthropic: ui.mbClaude,
+    commandcode: ui.mbCommandCode,
     "g1:gemini": ui.mbG1Gem,
     "g1:thirdparty": ui.mbG1Cla,
-    jules: ui.mbJules,
   };
 
   for (const id of BUDGET_ORDER) {
@@ -441,7 +435,6 @@ export function updateMicroBars(budgets: BudgetsReport, activeId: BudgetId): voi
     barEl.classList.toggle("hot", isHot);
     barEl.classList.toggle("unavailable", isUnavailable);
     barEl.classList.toggle("stale", isStale);
-    if (id === "jules") barEl.classList.add("jules");
 
     const fill = barEl.querySelector<HTMLElement>("i");
     if (fill) {
@@ -450,8 +443,6 @@ export function updateMicroBars(budgets: BudgetsReport, activeId: BudgetId): voi
 
     if (isUnavailable) {
       barEl.title = `${budgetLabel(id)}: unavailable (${entry?.reason ?? "not configured"})${isActive ? " [Active Session]" : ""}`;
-    } else if (id === "jules" && entry.absolute) {
-      barEl.title = `Jules: ${entry.absolute.used}/${entry.absolute.limit} tasks (${Math.round(pct)}%)${isActive ? " [Active Session]" : ""}`;
     } else {
       barEl.title = `${budgetLabel(id)}: ${Math.round(pct)}%${isActive ? " [Active Session]" : ""}`;
     }

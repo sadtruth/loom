@@ -1,18 +1,23 @@
 /**
  * Multi-provider budget aggregator — server/budgets.ts.
  *
- * Aggregates quota across all four BUDGET_IDS defined in server/models.ts:
- *   1. "anthropic"      — Anthropic OAuth 5-hour window from server/usage.ts
- *   2. "g1:gemini"       — Google AI Pro (google-account-1) Gemini models pool
- *   3. "g1:thirdparty"   — Google AI Pro (google-account-1) Claude & GPT models pool
- *   4. "jules"           — Jules daily session count against 200 ceiling
+ * Aggregates quota across the three pools the limits panel draws (BUDGET_IDS in server/models.ts):
+ *   1. "commandcode"   — the Command Code subscription: monthly credits, 5-hour and weekly windows
+ *   2. "g1:gemini"     — Google AI Pro (google-account-1) Gemini models pool
+ *   3. "g1:thirdparty" — Google AI Pro (google-account-1) Claude & GPT models pool
+ *
+ * Anthropic's own OAuth window and Jules' daily task count left this list on 2026-11-24: the box
+ * runs on Command Code, and Jules is winding down (User: *"you can remove jules budget checking
+ * since jules is winding down. You can also remove claude group anthropic models checking."*).
+ * `server/usage.ts` still polls Anthropic for the legacy `/api/bar` reading, which is a different
+ * surface and untouched here.
  *
  * ── PERCENT CONVENTION: PERCENT USED ─────────────────────────────────────────────────────
  * All budgets report percent USED (0..100):
  *   - 0%   = completely unused / 100% remaining
  *   - 100% = quota fully exhausted / 0% remaining
- * This matches Anthropic's utilization metric, Jules session consumption, and the height of
- * the micro-meter bars in the limits UI.
+ * This matches Command Code's computed utilization, Jules' retired session consumption and the
+ * height of the micro-meter bars in the limits UI.
  *
  * ── FAULT ISOLATION ──────────────────────────────────────────────────────────────────────
  * Every provider is queried independently. Failure in one provider leaves all other budgets
@@ -20,9 +25,8 @@
  */
 
 import { BUDGET_IDS, PRIMARY_GOOGLE_ACCOUNT, type BudgetId } from "./models.ts";
+import { readCurrentCommandCodeQuota, resetCommandCodeQuotaState } from "./quota-commandcode.ts";
 import { readCurrentGoogleQuota, resetGoogleQuotaState, type GoogleAccount } from "./quota-google.ts";
-import { readCurrentJulesQuota, resetJulesQuotaState } from "./quota-jules.ts";
-import { readCurrentQuota, resetQuotaState } from "./usage.ts";
 
 export type BudgetAvailability = "ok" | "stale" | "unavailable";
 
@@ -33,7 +37,7 @@ export interface BudgetWindowBreakdown {
 }
 
 export interface BudgetEntry {
-  /** The budget id: "anthropic" | "g1:gemini" | "g1:thirdparty" | "jules" */
+  /** The budget id: "commandcode" | "g1:gemini" | "g1:thirdparty" */
   id: BudgetId;
   /**
    * Percent USED (0..100).
@@ -46,7 +50,7 @@ export interface BudgetEntry {
   resetsAt: number | null;
   /** Severity when provided by upstream provider (e.g. Anthropic). */
   severity?: "normal" | "warning" | "critical" | null;
-  /** Absolute counts when available (e.g. Jules 25/200). */
+  /** Absolute counts when available. */
   absolute: { used: number; limit: number } | null;
   /** Availability state: "ok" | "stale" | "unavailable". */
   status: BudgetAvailability;
@@ -54,10 +58,12 @@ export interface BudgetEntry {
   reason: string | null;
   /** epoch ms when this reading was taken, or null if unavailable. */
   at: number | null;
-  /** Five-hour window breakdown when available (e.g. Google pools). */
+  /** Five-hour window breakdown when available (Command Code, Google pools). */
   fiveHour?: BudgetWindowBreakdown | null;
-  /** Weekly window breakdown when available (e.g. Google pools). */
+  /** Weekly window breakdown when available (Command Code, Google pools). */
   weekly?: BudgetWindowBreakdown | null;
+  /** Monthly window breakdown when available (Command Code only). */
+  monthly?: BudgetWindowBreakdown | null;
 }
 
 export interface BudgetsReport {
@@ -79,36 +85,53 @@ function unavailableBudget(id: BudgetId, reason: string): BudgetEntry {
     at: null,
     fiveHour: null,
     weekly: null,
+    monthly: null,
   };
 }
 
-async function getAnthropicBudget(now: number): Promise<BudgetEntry> {
+function windowOf(w: { percentUsed: number; resetsAt: number | null } | null): BudgetWindowBreakdown | null {
+  return w === null ? null : { percent: w.percentUsed, resetsAt: w.resetsAt };
+}
+
+/**
+ * Command Code's headline is the window that binds first — the largest percent used of the three.
+ * Anthropic's entry used to report its 5-hour window alone and the panel then had to explain a
+ * weekly limit that actually ran out; the worst window needs no explaining.
+ */
+async function getCommandCodeBudget(now: number): Promise<BudgetEntry> {
   try {
-    const { quota, stale } = await readCurrentQuota(now);
+    const { quota, stale, reason } = await readCurrentCommandCodeQuota(now);
     if (!quota) {
-      return unavailableBudget("anthropic", stale ? "Anthropic usage endpoint failed" : "Anthropic quota not polled yet");
+      return unavailableBudget("commandcode", reason ?? "Command Code quota unavailable");
     }
 
-    const fiveHour = quota.fiveHour;
-    if (!fiveHour) {
-      return unavailableBudget("anthropic", "No five-hour limit found in Anthropic usage response");
+    const fiveHour = windowOf(quota.fiveHour);
+    const weekly = windowOf(quota.weekly);
+    const monthly = windowOf(quota.monthly);
+    const windows = [fiveHour, weekly, monthly].filter((w): w is BudgetWindowBreakdown => w !== null);
+    if (windows.length === 0) {
+      return unavailableBudget("commandcode", "No recognized windows in the Command Code response");
     }
+
+    let winner = windows[0] as BudgetWindowBreakdown;
+    for (const w of windows) if (w.percent > winner.percent) winner = w;
 
     return {
-      id: "anthropic",
-      percent: fiveHour.percent,
+      id: "commandcode",
+      percent: winner.percent,
       percentKind: "used",
-      resetsAt: fiveHour.resetsAt,
-      severity: fiveHour.severity,
+      resetsAt: winner.resetsAt,
+      severity: null,
       absolute: null,
       status: stale ? "stale" : "ok",
-      reason: stale ? "Anthropic usage endpoint unreachable, showing last good reading" : null,
+      reason: stale ? (reason ?? "Command Code endpoint unreachable, showing last good reading") : null,
       at: quota.at,
-      fiveHour: { percent: fiveHour.percent, resetsAt: fiveHour.resetsAt, severity: fiveHour.severity },
-      weekly: quota.weekly ? { percent: quota.weekly.percent, resetsAt: quota.weekly.resetsAt, severity: quota.weekly.severity } : null,
+      fiveHour,
+      weekly,
+      monthly,
     };
   } catch (err) {
-    return unavailableBudget("anthropic", err instanceof Error ? err.message : "failed to read Anthropic quota");
+    return unavailableBudget("commandcode", err instanceof Error ? err.message : "failed to read Command Code quota");
   }
 }
 
@@ -120,12 +143,8 @@ function resolveGooglePoolEntry(
   at: number,
   missingMsg: string
 ): BudgetEntry {
-  const fiveHour = pool?.fiveHour
-    ? { percent: pool.fiveHour.percentUsed, resetsAt: pool.fiveHour.resetsAt }
-    : null;
-  const weekly = pool?.weekly
-    ? { percent: pool.weekly.percentUsed, resetsAt: pool.weekly.resetsAt }
-    : null;
+  const fiveHour = windowOf(pool?.fiveHour ?? null);
+  const weekly = windowOf(pool?.weekly ?? null);
 
   let winner: BudgetWindowBreakdown | null = null;
   if (fiveHour && weekly) {
@@ -149,6 +168,7 @@ function resolveGooglePoolEntry(
     at,
     fiveHour,
     weekly,
+    monthly: null,
   };
 }
 
@@ -198,121 +218,20 @@ async function getGoogleBudgets(
   }
 }
 
-function clampPct(v: number): number {
-  return Math.min(100, Math.max(0, v));
-}
-
-async function getJulesBudget(now: number): Promise<BudgetEntry> {
-  try {
-    const [k1, k2] = await Promise.all([
-      readCurrentJulesQuota(1, now),
-      readCurrentJulesQuota(2, now),
-    ]);
-
-    if (!k1.quota && !k2.quota) {
-      const reason =
-        k1.reason && k2.reason
-          ? `key 1: ${k1.reason}; key 2: ${k2.reason}`
-          : (k1.reason ?? k2.reason ?? "Jules quota unavailable");
-      return unavailableBudget("jules", reason);
-    }
-
-    if (k1.quota && k2.quota) {
-      const used = k1.quota.used + k2.quota.used;
-      const limit = k1.quota.ceiling + k2.quota.ceiling;
-      const percent = clampPct((used / (limit > 0 ? limit : 200)) * 100);
-      const stale = k1.stale || k2.stale;
-      let reason: string | null = null;
-      if (k1.stale && k2.stale) {
-        reason =
-          k1.reason && k2.reason
-            ? `key 1: ${k1.reason}; key 2: ${k2.reason}`
-            : (k1.reason ?? k2.reason ?? "Jules API unreachable, showing last good reading");
-      } else if (k1.stale) {
-        reason = k1.reason ?? "key 1 Jules API unreachable, showing last good reading";
-      } else if (k2.stale) {
-        reason = k2.reason ?? "key 2 Jules API unreachable, showing last good reading";
-      }
-
-      let resetsAt: number | null = null;
-      if (k1.quota.resetsAt !== null && k2.quota.resetsAt !== null) {
-        resetsAt = Math.min(k1.quota.resetsAt, k2.quota.resetsAt);
-      } else {
-        resetsAt = k1.quota.resetsAt ?? k2.quota.resetsAt;
-      }
-
-      return {
-        id: "jules",
-        percent,
-        percentKind: "used",
-        resetsAt,
-        absolute: {
-          used,
-          limit,
-        },
-        status: stale ? "stale" : "ok",
-        reason,
-        at: Math.max(k1.quota.at, k2.quota.at),
-      };
-    }
-
-    // Single-key success (fault isolation)
-    if (k1.quota && !k2.quota) {
-      const used = k1.quota.used;
-      const limit = k1.quota.ceiling;
-      const percent = clampPct((used / (limit > 0 ? limit : 100)) * 100);
-      return {
-        id: "jules",
-        percent,
-        percentKind: "used",
-        resetsAt: k1.quota.resetsAt,
-        absolute: {
-          used,
-          limit,
-        },
-        status: "stale",
-        reason: k2.reason ? `key 2 unavailable (${k2.reason}), showing key 1 only` : "key 2 unavailable, showing key 1 only",
-        at: k1.quota.at,
-      };
-    }
-
-    const k2Quota = k2.quota!;
-    const used = k2Quota.used;
-    const limit = k2Quota.ceiling;
-    const percent = clampPct((used / (limit > 0 ? limit : 100)) * 100);
-    return {
-      id: "jules",
-      percent,
-      percentKind: "used",
-      resetsAt: k2Quota.resetsAt,
-      absolute: {
-        used,
-        limit,
-      },
-      status: "stale",
-      reason: k1.reason ? `key 1 unavailable (${k1.reason}), showing key 2 only` : "key 1 unavailable, showing key 2 only",
-      at: k2Quota.at,
-    };
-  } catch (err) {
-    return unavailableBudget("jules", err instanceof Error ? err.message : "failed to read Jules quota");
-  }
-}
-
 /**
- * Aggregates all four provider budgets concurrently.
+ * Aggregates all provider budgets concurrently.
  * Guaranteed never to throw.
  */
 export async function readCurrentBudgets(now = Date.now()): Promise<BudgetsReport> {
-  const [anthropicRes, g1Res, julesRes] = await Promise.allSettled([
-    getAnthropicBudget(now),
+  const [commandCodeRes, g1Res] = await Promise.allSettled([
+    getCommandCodeBudget(now),
     getGoogleBudgets("g1", PRIMARY_GOOGLE_ACCOUNT, now),
-    getJulesBudget(now),
   ]);
 
-  const anthropic =
-    anthropicRes.status === "fulfilled"
-      ? anthropicRes.value
-      : unavailableBudget("anthropic", "Anthropic reading rejected");
+  const commandCode =
+    commandCodeRes.status === "fulfilled"
+      ? commandCodeRes.value
+      : unavailableBudget("commandcode", "Command Code reading rejected");
 
   const g1 =
     g1Res.status === "fulfilled"
@@ -322,16 +241,10 @@ export async function readCurrentBudgets(now = Date.now()): Promise<BudgetsRepor
           thirdparty: unavailableBudget("g1:thirdparty", "G1 reading rejected"),
         };
 
-  const jules =
-    julesRes.status === "fulfilled"
-      ? julesRes.value
-      : unavailableBudget("jules", "Jules reading rejected");
-
   const map: Record<BudgetId, BudgetEntry> = {
-    anthropic,
+    commandcode: commandCode,
     "g1:gemini": g1.gemini,
     "g1:thirdparty": g1.thirdparty,
-    jules,
   };
 
   const list: BudgetEntry[] = BUDGET_IDS.map((id) => map[id]);
@@ -347,7 +260,6 @@ export async function readCurrentBudgets(now = Date.now()): Promise<BudgetsRepor
  * Test seam: resets state across all quota readers.
  */
 export function resetBudgetsState(): void {
-  resetQuotaState();
+  resetCommandCodeQuotaState();
   resetGoogleQuotaState();
-  resetJulesQuotaState();
 }

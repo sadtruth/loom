@@ -130,8 +130,31 @@ const defaultSpawn: Spawn = async (args, opts) => {
   }
 };
 
-export function agentArgs(bin: string): string[] {
-  return [bin, "--print", "--model", "haiku", "--strict-mcp-config"];
+export function isAgy(bin: string): boolean {
+  return bin.includes("agy");
+}
+
+export function agentArgs(
+  bin: string,
+  opts?: { scratchDir?: string; prompt?: string; model?: string },
+): string[] {
+  if (isAgy(bin)) {
+    const model = opts?.model ?? Bun.env["LOOM_RECAP_MODEL"] ?? "gemini-3.8-flash-high";
+    const args = [
+      bin,
+      ...(opts?.scratchDir ? ["--add-dir", opts.scratchDir] : []),
+      "--model",
+      model,
+      "--mode",
+      "accept-edits",
+      "--dangerously-skip-permissions",
+    ];
+    if (opts?.prompt) {
+      args.push("-p", opts.prompt);
+    }
+    return args;
+  }
+  return [bin, "--print", "--model", opts?.model ?? "haiku", "--strict-mcp-config"];
 }
 
 /**
@@ -157,9 +180,13 @@ export async function runRecap(opts: {
   }
   const prompt = buildPrompt(opts.brief, opts.window, opts.title);
   const limit = opts.timeoutMs ?? TIMEOUT_MS;
+  const args = agentArgs(opts.bin, {
+    scratchDir: opts.scratchDir,
+    prompt,
+  });
   let res: { code: number; stdout: string; stderr: string; timedOut?: boolean };
   try {
-    res = await spawn(agentArgs(opts.bin), {
+    res = await spawn(args, {
       cwd: opts.scratchDir,
       stdin: prompt,
       timeoutMs: limit,

@@ -12,7 +12,7 @@
 import { dirname, join, resolve as resolvePath } from "node:path";
 import index from "../client/index.html";
 import { PROJECTS_ROOT, listProjects } from "./projects.ts";
-import { AGY_PROJECTS_ROOT } from "./agy.ts";
+import { AGY_LAUNCHER, AGY_PROJECTS_ROOT } from "./agy.ts";
 import { listSessions, listSessionsForProject, transcriptPath, attachPicks } from "./sessions.ts";
 import type { SessionInfo } from "./sessions.ts";
 import { Tailer } from "./tail.ts";
@@ -195,6 +195,7 @@ const ROOT = Bun.env["LOOM_PROJECTS_ROOT"] ?? PROJECTS_ROOT;
 const AGY_ROOT = Bun.env["LOOM_AGY_PROJECTS_ROOT"] ?? AGY_PROJECTS_ROOT;
 const POLL_MS = Number(Bun.env["LOOM_POLL_MS"] ?? 500);
 const CLAUDE_BIN = Bun.env["LOOM_CLAUDE_BIN"] ?? "claude";
+const RECAP_BIN = Bun.env["LOOM_RECAP_BIN"] ?? AGY_LAUNCHER;
 const PERMIT_TIMEOUT_MS = Number(Bun.env["LOOM_PERMIT_TIMEOUT_MS"] ?? 30 * 60 * 1000);
 
 /**
@@ -966,8 +967,8 @@ const server = Bun.serve<SocketData, Routes>({
       return json(await readBarReading(session));
     },
 
-    // Every budget User spends, not just Anthropic's: two pools on each of two Google accounts
-    // and Jules' daily allowance. Each entry says whether its number is current, stale or missing
+    // Every budget the panel draws: the Command Code subscription's three windows and the two
+    // pools on the Google account. Each entry says whether its number is current, stale or missing
     // and why, because a budget that cannot be read must look unreadable rather than empty.
     "/api/budgets": async (req) => {
       const denied = requireAuth(req);
@@ -2037,7 +2038,7 @@ const server = Bun.serve<SocketData, Routes>({
         if (!resume && claimed.state === "absent") {
           void recapForNewSession(
             {
-              bin: CLAUDE_BIN,
+              bin: RECAP_BIN,
               transcriptRoot: ROOT,
               stateDir: STATE_DIR,
               scratchDir: RECAP_SCRATCH,
@@ -2162,7 +2163,7 @@ const server = Bun.serve<SocketData, Routes>({
         const gen = warmStart(dir, new Date().toISOString());
         void recapForNewSession(
           {
-            bin: CLAUDE_BIN,
+            bin: RECAP_BIN,
             transcriptRoot: ROOT,
             stateDir: STATE_DIR,
             scratchDir: RECAP_SCRATCH,
@@ -2197,7 +2198,7 @@ const server = Bun.serve<SocketData, Routes>({
         const forSession = body.session;
         void recapForNewSession(
           {
-            bin: CLAUDE_BIN,
+            bin: RECAP_BIN,
             transcriptRoot: ROOT,
             stateDir: STATE_DIR,
             scratchDir: RECAP_SCRATCH,

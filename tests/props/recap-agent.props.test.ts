@@ -71,6 +71,25 @@ describe("requirement 177 — the child is cheap, toolless, and not a session", 
     expect(args).not.toContain("--session-id");
   });
 
+  test("it builds agy args with launcher, model, and prompt when bin is agy", () => {
+    const args = agentArgs("/path/to/agy.sh", {
+      scratchDir: "/var/loom/scratch",
+      prompt: "the prompt text",
+    });
+    expect(args[0]).toBe("/path/to/agy.sh");
+    expect(args).toContain("--add-dir");
+    expect(args).toContain("/var/loom/scratch");
+    expect(args).toContain("--model");
+    expect(args).toContain("gemini-3.8-flash-high");
+    expect(args).toContain("--mode");
+    expect(args).toContain("accept-edits");
+    expect(args).toContain("--dangerously-skip-permissions");
+    expect(args).toContain("-p");
+    expect(args).toContain("the prompt text");
+    expect(args).not.toContain("--print");
+    expect(args).not.toContain("--strict-mcp-config");
+  });
+
   test("it is spawned in the scratch directory it was given, not the record's", async () => {
     let sawCwd = "";
     await runRecap({

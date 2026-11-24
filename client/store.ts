@@ -151,7 +151,7 @@ export const state = {
   /** The last `/api/bar` answer — the account's own quota reading, never the fitted estimate
    *  (usage-bar, 2026-08-26). Null until the first poll answers. */
   bar: null as BarReading | null,
-  /** The last `/api/budgets` answer — multi-provider quota across all 6 pools. */
+  /** The last `/api/budgets` answer — the Command Code pool and the two Google pools. */
   budgets: null as BudgetsReport | null,
 };
 
@@ -208,10 +208,9 @@ export const ui = {
   barSep0: need<HTMLElement>("bar-sep0"),
   barCtx: need<HTMLElement>("bar-ctx"),
   microStrip: need<HTMLElement>("micro-strip"),
-  mbClaude: need<HTMLElement>("mb-claude"),
+  mbCommandCode: need<HTMLElement>("mb-commandcode"),
   mbG1Gem: need<HTMLElement>("mb-g1-gem"),
   mbG1Cla: need<HTMLElement>("mb-g1-cla"),
-  mbJules: need<HTMLElement>("mb-jules"),
   barTip: need<HTMLElement>("bar-tip"),
   composerNew: need<HTMLButtonElement>("composer-new"),
   opens: need<HTMLElement>("opens"),

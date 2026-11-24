@@ -26,6 +26,7 @@ import {
   agyStdinLine,
   agyTranscriptPath,
 } from "../../server/agy.ts";
+import { MODEL_SPECS } from "../../server/models.ts";
 import { Runner, type JobEvent, type StartRequest } from "../../server/input.ts";
 import { TranscriptParser } from "../../server/transcript.ts";
 
@@ -555,5 +556,11 @@ describe("Property 4: agyArgs and shadow transcript path separation", () => {
         },
       ),
     );
+  });
+
+  test("gemini-4-hydrogen-high is the default Google model ahead of 3.8-flash", () => {
+    const googleSpecs = MODEL_SPECS.filter((m) => m.family === "google");
+    expect(googleSpecs[0]?.id).toBe("g1:gemini-4-hydrogen-high");
+    expect(googleSpecs[0]?.arg).toBe("gemini-4-hydrogen-high");
   });
 });

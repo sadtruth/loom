@@ -183,6 +183,30 @@ const launch = existsSync(CHROMIUM) ? { executablePath: CHROMIUM } : {};
 process.env["NO_PROXY"] = "localhost,127.0.0.1,::1";
 process.env["no_proxy"] = "localhost,127.0.0.1,::1";
 
+// The Command Code budget, which the badge and the panel draw for Claude-family sessions since
+// 2026-11-24. Same reasoning as the Anthropic stub above, and the same requirement that it exist
+// before boot; each worker gets its own slotted copy so two workers cannot drive each other.
+function commandCodeStub() {
+  const now = Date.now();
+  return {
+    credits: {
+      credits: { monthlyCredits: 66, purchasedCredits: 0, freeCredits: 0 },
+      windowLimits: {
+        limited: true,
+        exceeded: null,
+        // 3.22/14 = 23%, the worst of the three, so the badge's headline is 23%.
+        fiveHour: { used: 3.22, cap: 14, exceeded: false, resetAt: now + 4 * 60 * 60 * 1000 },
+        // 2.8/35 = 8%.
+        weekly: { used: 2.8, cap: 35, exceeded: false, resetAt: now + 40 * 60 * 60 * 1000 },
+      },
+    },
+    // 4 of the plan's 70 credits spent = 6%.
+    subscription: {
+      data: { planId: "individual-goat", currentPeriodEnd: new Date(now + 29 * 24 * 60 * 60 * 1000).toISOString() },
+    },
+  };
+}
+
 if (!isWorker) {
   for (let i = 0; i < WORKERS; i += 1) {
     const dir = join(OUT, slotFor("test-results", i));
@@ -192,6 +216,7 @@ if (!isWorker) {
     } catch {
       /* not there is the normal case */
     }
+    writeFileSync(join(dir, "quota-commandcode.json"), JSON.stringify(commandCodeStub()));
     writeFileSync(
       join(dir, "quota.json"),
       JSON.stringify({
@@ -242,6 +267,9 @@ process.env["LOOM_BAR_ARCHIVE"] = join(ROOT, "tests", "fixture", slot("transcrip
 // fail with no network at all. The spec REWRITES this file to drive the severity and stale states,
 // which is why the poll gap is dropped to 300ms alongside it (usage-bar, 2026-08-26).
 process.env["LOOM_QUOTA_STUB"] = join(OUT, slot("test-results"), "quota.json");
+// The Command Code budget's stub path. It is seeded per worker in the block above, for the same
+// reason the Anthropic one is.
+process.env["LOOM_QUOTA_STUB_COMMANDCODE"] = join(OUT, slot("test-results"), "quota-commandcode.json");
 // The stub must exist BEFORE the server boots — `readQuota` only ever reports what this file
 // holds, so a first paint racing an empty/missing stub shows nothing and the spec has to wait it
 // out. Seeded NOW-relative: a `session` window at 23%/normal resetting ~4h out, a `weekly_all`
@@ -348,6 +376,10 @@ export default defineConfig({
       // See the note beside LOOM_QUOTA_STUB above: a stubbed quota, repolled fast enough that a
       // spec can step through severities without waiting a real minute per step.
       LOOM_QUOTA_STUB: join(OUT, slotFor("test-results", i), "quota.json"),
+      // The badge's other budget since 2026-11-24, and the one that draws unless a spec says
+      // otherwise. Slotted so two workers cannot drive each other's windows, and seeded with the
+      // same shape the runner-level stub above writes.
+      LOOM_QUOTA_STUB_COMMANDCODE: join(OUT, slotFor("test-results", i), "quota-commandcode.json"),
       LOOM_QUOTA_POLL_MS: "300",
       // The pane's readable root under test is loom itself: the fixture points a chip at
       // ARCHITECTURE.md, and everything outside must come back 403 from the same guard.

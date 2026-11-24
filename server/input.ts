@@ -369,7 +369,15 @@ const PROJECT_HOOKS = projectHooks();
  * itself and injecting would fire every guard TWICE; below it, discovery fails and injection is
  * the only thing that makes them run at all.
  */
-export function childSettings(mode: PermissionStyle, cwd?: string): string {
+export function defaultPermissionMode(): string {
+  return Bun.env["LOOM_PERMISSION_MODE"] ?? "auto";
+}
+
+export function childSettings(
+  mode: PermissionStyle,
+  cwd?: string,
+  defaultMode: string = defaultPermissionMode(),
+): string {
   // A cwd that IS a core root needs nothing injected: the CLI finds that core's own settings, and
   // injecting the loom repo's on top would give a work session the personal vault's guards pointed
   // at the personal vault. Only a cwd that is neither the repo root nor a core — a legacy record
@@ -382,7 +390,7 @@ export function childSettings(mode: PermissionStyle, cwd?: string): string {
     { hooks: [{ type: "command", command: `bun "${HOOK_PATH}"`, timeout: 3600 }] },
   ];
   return JSON.stringify({
-    ...(mode === "auto" ? { permissions: { defaultMode: "auto" } } : {}),
+    ...(mode === "auto" ? { permissions: { defaultMode } } : {}),
     hooks: { ...injected, PreToolUse: pre },
   });
 }
@@ -501,7 +509,11 @@ export function childMcpConfig(cwd?: string): string {
  * nothing — and it also dragged in the account-level `claude.ai Google Drive` connector, a second
  * flap source that drops and retries over the network on its own schedule.
  */
-export function childArgs(bin: string, req: StartRequest): string[] {
+export function childArgs(
+  bin: string,
+  req: StartRequest,
+  defaultMode: string = defaultPermissionMode(),
+): string[] {
   return [
     bin,
     "--print",
@@ -511,10 +523,11 @@ export function childArgs(bin: string, req: StartRequest): string[] {
     "--output-format",
     "stream-json",
     "--settings",
-    childSettings(req.mode, req.cwd),
+    childSettings(req.mode, req.cwd, defaultMode),
     "--strict-mcp-config",
     "--permission-prompts", "host",
     "--permission-prompt-tool", "stdio",
+    ...(defaultMode === "bypassPermissions" ? ["--dangerously-skip-permissions"] : []),
     "--mcp-config",
     childMcpConfig(req.cwd),
     ...(req.model === "default" ? [] : ["--model", req.model]),
