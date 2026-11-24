@@ -67,6 +67,19 @@ test("the usage badge reads Command Code's quota, and follows it through warning
   const pct = page.locator("#bar-pct");
   const reset = page.locator("#bar-reset");
 
+  // 0. The SERVER's answer first, and with its own body in the message. This spec claims the badge
+  //    reads Command Code; if the reading is missing, or the session that happened to open belongs
+  //    to the Google family, the symptom is a bare "—" and the cause is invisible. Asserting the
+  //    endpoint and then the ACTIVE micro-meter names both facts in the failure.
+  const budgets = await (await page.request.get("/api/budgets")).json();
+  expect(budgets.budgets.commandcode, `/api/budgets → ${JSON.stringify(budgets.budgets.commandcode)}`).toMatchObject({
+    status: "ok",
+  });
+  await expect(
+    page.locator(".micro-bar.active"),
+    "the open session spends Command Code's pool, so that is the meter the badge draws",
+  ).toHaveAttribute("id", "mb-commandcode");
+
   // 1. On screen, at the FOOT OF THE RIGHT COLUMN (SPEC 186, unchanged by 249), and the percentage
   //    on first paint is the STUB's number, 23% — the worst of the three windows, read, never
   //    computed from the transcript archive (SPEC 250). The seed write happens before the server

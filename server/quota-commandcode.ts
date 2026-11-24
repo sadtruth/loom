@@ -301,6 +301,9 @@ const state: State = { lastGood: null, stale: false, lastAttempt: 0, inflight: n
 
 function failed(reason: string): void {
   state.stale = true;
+  // Logged once per distinct reason, not once per poll: the badge going quiet with nothing in the
+  // log is how a missing key spent a day looking like a broken panel (same lesson as usage.ts).
+  if (state.lastFailure !== reason) console.log(`[loom] command code quota: ${reason}`);
   state.lastFailure = reason;
 }
 
@@ -369,6 +372,7 @@ async function poll(now: number): Promise<void> {
     }
     state.lastGood = quota;
     state.stale = false;
+    if (state.lastFailure !== null) console.log(`[loom] command code quota: reading again after ${state.lastFailure}`);
     state.lastFailure = null;
   } catch (err) {
     failed(err instanceof Error ? `${err.name}: ${err.message}` : "unknown error");
