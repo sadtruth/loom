@@ -12,7 +12,7 @@
 import { dirname, join, resolve as resolvePath } from "node:path";
 import index from "../client/index.html";
 import { PROJECTS_ROOT, listProjects } from "./projects.ts";
-import { AGY_LAUNCHER, AGY_PROJECTS_ROOT } from "./agy.ts";
+import { AGY_PROJECTS_ROOT } from "./agy.ts";
 import { listSessions, listSessionsForProject, transcriptPath, attachPicks } from "./sessions.ts";
 import type { SessionInfo } from "./sessions.ts";
 import { Tailer } from "./tail.ts";
@@ -195,7 +195,11 @@ const ROOT = Bun.env["LOOM_PROJECTS_ROOT"] ?? PROJECTS_ROOT;
 const AGY_ROOT = Bun.env["LOOM_AGY_PROJECTS_ROOT"] ?? AGY_PROJECTS_ROOT;
 const POLL_MS = Number(Bun.env["LOOM_POLL_MS"] ?? 500);
 const CLAUDE_BIN = Bun.env["LOOM_CLAUDE_BIN"] ?? "claude";
-const RECAP_BIN = Bun.env["LOOM_RECAP_BIN"] ?? AGY_LAUNCHER;
+// The recap child runs the SAME binary loom drives sessions with, at `--model haiku`, which on this
+// box's backend resolves to deepseek-v4.1-flash (ANTHROPIC_DEFAULT_HAIKU_MODEL). It pointed at
+// agy.sh and a Gemini model from 2026-11-22 to 2026-11-26 (e4be8a67); switched back —
+// haiku is on the subscription loom already pays for, so a recap spends nothing extra.
+const RECAP_BIN = Bun.env["LOOM_RECAP_BIN"] ?? CLAUDE_BIN;
 const PERMIT_TIMEOUT_MS = Number(Bun.env["LOOM_PERMIT_TIMEOUT_MS"] ?? 30 * 60 * 1000);
 
 /**
